@@ -11,11 +11,13 @@ keywords = ["cryptography", "blockchain", "zero-knowledge", "bulletproofs"]
 description = "A blockchain VM with cloaked transactions and zero-knowledge smart contracts"
 
 [dependencies]
-curve25519-dalek = { version = "1.0.1", features = ["serde"] }
+failure = "0.1"
+byteorder = "1"
 merlin = "1.0.1"
 rand = "0.6"
 subtle = "2"
-failure = "0.1"
+curve25519-dalek = { version = "1.0.1", features = ["serde"] }
+
 
 [dependencies.bulletproofs]
 git = "https://github.com/dalek-cryptography/bulletproofs"
