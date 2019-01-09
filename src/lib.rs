@@ -9,6 +9,7 @@ extern crate subtle;
 #[macro_use]
 extern crate failure;
 
+mod errors;
 mod transcript;
 mod point_ops;
 mod predicate;
