@@ -4,19 +4,18 @@
 //! - disjunction: P = L + f(L,R)*B
 //! - program_commitment: P = h(prog)*B2
 
+use crate::errors::VMError;
+use crate::point_ops::PointOp;
+use crate::transcript::TranscriptProtocol;
+use bulletproofs::PedersenGens;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
-use bulletproofs::PedersenGens;
 use merlin::Transcript;
-use crate::transcript::TranscriptProtocol;
-use crate::point_ops::PointOp;
-use crate::errors::VMError;
 
 /// Predicate is represented by a compressed Ristretto point.
 pub struct Predicate(CompressedRistretto);
 
 impl Predicate {
-
     pub fn transcript() -> Transcript {
         Transcript::new(b"ZkVM.predicate")
     }
@@ -45,7 +44,7 @@ impl Predicate {
         PointOp {
             primary: Some(f),
             secondary: None,
-            arbitrary: vec![(self.0, -Scalar::one()), (left.0, Scalar::one())]
+            arbitrary: vec![(-Scalar::one(), self.0), (Scalar::one(), left.0)],
         }
     }
 
@@ -55,7 +54,7 @@ impl Predicate {
         let mut t = Predicate::transcript();
         t.commit_bytes(b"prog", &prog);
         let h = t.challenge_scalar(b"h");
-        Predicate((h*gens.B_blinding).compress())
+        Predicate((h * gens.B_blinding).compress())
     }
 
     /// Verifies whether the current predicate is a commitment to a program `prog`.
@@ -71,7 +70,7 @@ impl Predicate {
         PointOp {
             primary: None,
             secondary: Some(h),
-            arbitrary: vec![(self.0, -Scalar::one())]
+            arbitrary: vec![(-Scalar::one(), self.0)],
         }
     }
 }

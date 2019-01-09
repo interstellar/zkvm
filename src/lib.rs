@@ -10,7 +10,6 @@ extern crate subtle;
 extern crate failure;
 
 mod errors;
-mod transcript;
 mod point_ops;
 mod predicate;
-
+mod transcript;
