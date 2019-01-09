@@ -33,6 +33,7 @@ impl Predicate {
 
     /// Verifies whether the current predicate is a disjunction of two others.
     /// Returns a `PointOp` instance that can be verified in a batch with other operations.
+    ///
     /// Transcript `t` must be the cloned `Predicate::transcript()`. It is provided explicitly
     /// in order to reuse the precomputed instance.
     pub fn prove_or(&self, left: &Predicate, right: &Predicate, mut t: Transcript) -> PointOp {
@@ -45,6 +46,32 @@ impl Predicate {
             primary: Some(f),
             secondary: None,
             arbitrary: vec![(self.0, -Scalar::one()), (left.0, Scalar::one())]
+        }
+    }
+
+    /// Creates a program-based predicate.
+    /// One cannot sign for it as a public key because it’s using a secondary generator.
+    pub fn program_predicate(prog: &[u8], gens: &PedersenGens) -> Predicate {
+        let mut t = Predicate::transcript();
+        t.commit_bytes(b"prog", &prog);
+        let h = t.challenge_scalar(b"h");
+        Predicate((h*gens.B_blinding).compress())
+    }
+
+    /// Verifies whether the current predicate is a commitment to a program `prog`.
+    /// Returns a `PointOp` instance that can be verified in a batch with other operations.
+    ///
+    /// Transcript `t` must be the cloned `Predicate::transcript()`. It is provided explicitly
+    /// in order to reuse the precomputed instance.
+    pub fn prove_program_predicate(&self, prog: &[u8], mut t: Transcript) -> PointOp {
+        t.commit_bytes(b"prog", &prog);
+        let h = t.challenge_scalar(b"h");
+
+        // P == h*B2   ->   0 == -P + h*B2
+        PointOp {
+            primary: None,
+            secondary: Some(h),
+            arbitrary: vec![(self.0, -Scalar::one())]
         }
     }
 }
