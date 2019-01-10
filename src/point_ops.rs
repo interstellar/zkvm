@@ -55,11 +55,90 @@ mod tests {
 
     #[test]
     fn test_empty() {
+        let gens = PedersenGens::default();
         let op = PointOp {
             primary: None,
             secondary: None,
             arbitrary: Vec::new(),
         };
-        assert!(op.verify(&PedersenGens::default()).is_ok());
+        assert!(op.verify(&gens).is_ok());
+    }
+
+    #[test]
+    fn test_with_primary_generator() {
+        let gens = PedersenGens::default();
+        let op = PointOp {
+            primary: Some(Scalar::one()),
+            secondary: None,
+            arbitrary: vec![(-Scalar::one(), gens.B.compress())],
+        };
+        assert!(op.verify(&gens).is_ok());
+
+        let op = PointOp {
+            primary: Some(Scalar::one()),
+            secondary: None,
+            arbitrary: vec![(-Scalar::one(), gens.B_blinding.compress())],
+        };
+        assert!(op.verify(&gens).is_err());
+
+        let op = PointOp {
+            primary: Some(Scalar::one()),
+            secondary: None,
+            arbitrary: vec![(Scalar::one(), gens.B.compress())],
+        };
+        assert!(op.verify(&gens).is_err());
+    }
+
+    #[test]
+    fn test_with_secondary_generator() {
+        let gens = PedersenGens::default();
+        let op = PointOp {
+            primary: None,
+            secondary: Some(Scalar::one()),
+            arbitrary: vec![(-Scalar::one(), gens.B_blinding.compress())],
+        };
+        assert!(op.verify(&gens).is_ok());
+
+        let op = PointOp {
+            primary: None,
+            secondary: Some(Scalar::one()),
+            arbitrary: vec![(-Scalar::one(), gens.B.compress())],
+        };
+        assert!(op.verify(&gens).is_err());
+
+        let op = PointOp {
+            primary: None,
+            secondary: Some(Scalar::one()),
+            arbitrary: vec![(Scalar::one(), gens.B_blinding.compress())],
+        };
+        assert!(op.verify(&gens).is_err());
+    }
+
+    #[test]
+    fn test_with_both_generators() {
+        let gens = PedersenGens::default();
+        let op = PointOp {
+            primary: Some(Scalar::one()),
+            secondary: Some(Scalar::one()),
+            arbitrary: vec![
+                (-Scalar::one(), gens.B_blinding.compress()),
+                (-Scalar::one(), gens.B.compress()),
+            ],
+        };
+        assert!(op.verify(&gens).is_ok());
+    }
+
+    #[test]
+    fn test_with_no_generators() {
+        let gens = PedersenGens::default();
+        let op = PointOp {
+            primary: None,
+            secondary: None,
+            arbitrary: vec![
+                (-Scalar::one(), gens.B.compress()),
+                (Scalar::one(), gens.B.compress()),
+            ],
+        };
+        assert!(op.verify(&gens).is_ok());
     }
 }
