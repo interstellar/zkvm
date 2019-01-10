@@ -34,6 +34,10 @@ impl PointOp {
             points.push(Some(gens.B_blinding));
         }
 
+        if points.len() == 0 {
+            return Ok(());
+        }
+
         let check = RistrettoPoint::optional_multiscalar_mul(weights, points)
             .ok_or_else(|| VMError::PointOperationFailed)?;
 
@@ -42,5 +46,20 @@ impl PointOp {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty() {
+        let op = PointOp {
+            primary: None,
+            secondary: None,
+            arbitrary: Vec::new(),
+        };
+        assert!(op.verify(&PedersenGens::default()).is_ok());
     }
 }
