@@ -13,7 +13,8 @@ use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
 /// Predicate is represented by a compressed Ristretto point.
-pub struct Predicate(CompressedRistretto);
+#[derive(Copy,Clone,PartialEq,Eq)]
+pub struct Predicate(pub CompressedRistretto);
 
 impl Predicate {
     pub fn transcript() -> Transcript {
@@ -72,5 +73,68 @@ impl Predicate {
             secondary: Some(h),
             arbitrary: vec![(-Scalar::one(), self.0)],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_program_commitment() {
+        let gens = PedersenGens::default();
+        let prog = b"iddqd";
+        let pred = Predicate::program_predicate(prog, &gens);
+        let op = pred.prove_program_predicate(prog, Predicate::transcript());
+        assert!(op.verify(&gens).is_ok());
+    }
+
+    #[test]
+    fn invalid_program_commitment() {
+        let gens = PedersenGens::default();
+        let prog = b"iddqd";
+        let prog2 = b"smth else";
+        let pred = Predicate::program_predicate(prog, &gens);
+        let op = pred.prove_program_predicate(prog2, Predicate::transcript());
+        assert!(op.verify(&gens).is_err());
+    }
+
+    #[test]
+    fn valid_disjunction() {
+        let gens = PedersenGens::default();
+
+        // dummy predicates
+        let left = Predicate(gens.B.compress());
+        let right = Predicate(gens.B_blinding.compress());
+
+        let pred = left.or(&right, &gens).unwrap();
+        let op = pred.prove_or(&left, &right, Predicate::transcript());
+        assert!(op.verify(&gens).is_ok());
+    }
+
+    #[test]
+    fn invalid_disjunction1() {
+        let gens = PedersenGens::default();
+
+        // dummy predicates
+        let left = Predicate(gens.B.compress());
+        let right = Predicate(gens.B_blinding.compress());
+
+        let pred = left.clone();
+        let op = pred.prove_or(&left, &right, Predicate::transcript());
+        assert!(op.verify(&gens).is_err());
+    }
+
+    #[test]
+    fn invalid_disjunction2() {
+        let gens = PedersenGens::default();
+
+        // dummy predicates
+        let left = Predicate(gens.B.compress());
+        let right = Predicate(gens.B_blinding.compress());
+
+        let pred = left.or(&right, &gens).unwrap();
+        let op = pred.prove_or(&right, &left, Predicate::transcript());
+        assert!(op.verify(&gens).is_err());
     }
 }

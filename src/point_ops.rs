@@ -54,7 +54,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_empty() {
+    fn empty() {
         let gens = PedersenGens::default();
         let op = PointOp {
             primary: None,
@@ -65,7 +65,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_primary_generator() {
+    fn primary_generator() {
         let gens = PedersenGens::default();
         let op = PointOp {
             primary: Some(Scalar::one()),
@@ -90,7 +90,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_secondary_generator() {
+    fn secondary_generator() {
         let gens = PedersenGens::default();
         let op = PointOp {
             primary: None,
@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_both_generators() {
+    fn both_generators() {
         let gens = PedersenGens::default();
         let op = PointOp {
             primary: Some(Scalar::one()),
@@ -129,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_no_generators() {
+    fn no_generators() {
         let gens = PedersenGens::default();
         let op = PointOp {
             primary: None,
