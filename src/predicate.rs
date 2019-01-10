@@ -13,7 +13,7 @@ use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
 /// Predicate is represented by a compressed Ristretto point.
-#[derive(Copy,Clone,PartialEq,Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Predicate(pub CompressedRistretto);
 
 impl Predicate {

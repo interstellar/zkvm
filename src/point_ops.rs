@@ -6,6 +6,7 @@ use curve25519_dalek::traits::{IsIdentity, VartimeMultiscalarMul};
 use super::errors::VMError;
 
 /// Deferred point operation.
+#[derive(Clone, Debug)]
 pub struct PointOp {
     /// Weight for the primary generator.
     /// None stands for zero.

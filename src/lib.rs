@@ -12,4 +12,5 @@ extern crate failure;
 mod errors;
 mod point_ops;
 mod predicate;
+mod signature;
 mod transcript;
