@@ -6,8 +6,6 @@ use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
 pub trait TranscriptProtocol {
-    /// Commit a 64-bit integer.
-    fn commit_u64(&mut self, label: &'static [u8], n: u64);
     /// Commit a `scalar` with the given `label`.
     fn commit_scalar(&mut self, label: &'static [u8], scalar: &Scalar);
     /// Commit a `point` with the given `label`.
@@ -23,9 +21,6 @@ fn le_u64(value: u64) -> [u8; 8] {
 }
 
 impl TranscriptProtocol for Transcript {
-    fn commit_u64(&mut self, label: &'static [u8], n: u64) {
-        self.commit_bytes(label, &le_u64(n));
-    }
 
     fn commit_scalar(&mut self, label: &'static [u8], scalar: &Scalar) {
         self.commit_bytes(label, scalar.as_bytes());
