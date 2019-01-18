@@ -1,5 +1,5 @@
+use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
-use byteorder::{ByteOrder,LittleEndian};
 
 const MAX_OPCODE: u8 = 0x25;
 
@@ -18,12 +18,12 @@ pub enum Instruction {
     Range(u8),
 
     /// Represents a cloak operation between M inputs and N outputs
-    Cloak(usize,usize),
+    Cloak(usize, usize),
 
-    /// Represents an output with N payload items 
+    /// Represents an output with N payload items
     Output(usize),
 
-    /// Represents a contract with N payload items 
+    /// Represents a contract with N payload items
     Contract(usize),
 
     /// Represents all other supported instructions without any immediate data (plain opcodes)
@@ -33,13 +33,12 @@ pub enum Instruction {
     Unsupported(u8),
 }
 
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Op {
     Push = 0x00,
     Drop = 0x01,
-    Dup  = 0x02,
+    Dup = 0x02,
     Roll = 0x03,
     Const = 0x04,
     Var = 0x05,
@@ -95,7 +94,7 @@ impl Instruction {
     /// Return `None` if there is not enough bytes to parse an instruction.
     pub fn parse(program: &[u8]) -> Option<(Instruction, usize)> {
         if program.len() == 0 {
-            return None
+            return None;
         }
 
         let opcode = program[0];
@@ -115,52 +114,50 @@ impl Instruction {
                 }
                 let strlen = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Push(strlen), 1 + 4 + strlen))
-            },
+            }
             Op::Dup => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let idx = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Dup(idx), 1 + 4))
-            },
+            }
             Op::Roll => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let idx = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Roll(idx), 1 + 4))
-            },
+            }
             Op::Range => {
                 if immdata.len() < 1 {
                     return None;
                 }
                 Some((Instruction::Range(immdata[0]), 1 + 1))
-            },
+            }
             Op::Cloak => {
                 if immdata.len() < 8 {
                     return None;
                 }
                 let m = LittleEndian::read_u32(immdata) as usize;
                 let n = LittleEndian::read_u32(&immdata[4..]) as usize;
-                Some((Instruction::Cloak(m,n), 1 + 8))
-            },
+                Some((Instruction::Cloak(m, n), 1 + 8))
+            }
             Op::Output => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let k = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Output(k), 1 + 4))
-            },
+            }
             Op::Contract => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let k = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Contract(k), 1 + 4))
-            },
-            _ => {
-                Some((Instruction::Other(op), 1))
             }
+            _ => Some((Instruction::Other(op), 1)),
         }
     }
 }

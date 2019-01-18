@@ -1,12 +1,11 @@
-
+use bulletproofs::r1cs::R1CSProof;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
-use bulletproofs::r1cs::R1CSProof;
 
 use crate::errors::VMError;
-use crate::signature::Signature;
-use crate::predicate::Predicate;
 use crate::point_ops::PointOp;
+use crate::predicate::Predicate;
+use crate::signature::Signature;
 
 pub const CURRENT_TX_VERSION: u64 = 1;
 
@@ -33,7 +32,6 @@ pub struct ZkVM<'tx> {
 }
 
 impl<'tx> ZkVM<'tx> {
-
     /// Creates a new instance of ZkVM with the appropriate parameters
     pub fn new(
         version: u64,
@@ -55,9 +53,9 @@ impl<'tx> ZkVM<'tx> {
             unique: false,
             stack: Vec::new(),
 
-            current_program: Run{
+            current_program: Run {
                 program: program,
-                offset: 0
+                offset: 0,
             },
             program_stack: Vec::new(),
             txlog: Vec::new(),
@@ -69,11 +67,9 @@ impl<'tx> ZkVM<'tx> {
 
     /// Executes the transaction and returns the txid upon success.
     /// TBD: add hooks to get proof-of-inclusion for various txlog items
-    pub fn verify(self) -> Result<[u8;32], VMError> {
-
+    pub fn verify(self) -> Result<[u8; 32], VMError> {
         unimplemented!()
     }
-
 }
 
 enum Item<'tx> {
@@ -83,7 +79,7 @@ enum Item<'tx> {
 }
 
 struct Data<'tx> {
-    bytes: &'tx [u8]
+    bytes: &'tx [u8],
 }
 
 struct Contract<'tx> {
@@ -110,7 +106,3 @@ enum VariableCommitment {
     /// so its commitment is no longer replaceable via `reblind`.
     Attached(CompressedRistretto, usize),
 }
-
-
-
-

@@ -21,7 +21,6 @@ fn le_u64(value: u64) -> [u8; 8] {
 }
 
 impl TranscriptProtocol for Transcript {
-
     fn commit_scalar(&mut self, label: &'static [u8], scalar: &Scalar) {
         self.commit_bytes(label, scalar.as_bytes());
     }

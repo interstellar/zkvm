@@ -42,9 +42,7 @@ pub struct Signature {
     s: Scalar,
 }
 
-impl Signature {
-    
-}
+impl Signature {}
 
 // Serialization
 impl Signature {
