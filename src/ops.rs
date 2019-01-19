@@ -2,49 +2,51 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct Instruction {
-    op: Op,
-    kind: InstructionKind,
-
-    /// Size that the instruction occupies in the program string.
-    /// E.g. a push instruction with 5-byte string occupies 1+4+5=10 bytes
-    /// (4 for the LE32 length prefix).
-    size: usize,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum InstructionKind {
-    /// Instruction without any immediate data
-    Plain,
-
-    /// Data string with a specified length
-    Push(usize),
-
-    /// Dup of an item at a given index from the top of the stack
-    Dup(usize),
-
-    /// Roll of an item from a given index from the top of the stack.
-    Roll(usize),
-
-    /// Range proof with a given width (1..64)
-    Range(u8),
-
-    /// Cloak operation between M inputs and N outputs
-    Cloak(usize, usize),
-
-    /// Output with N payload items
-    Output(usize),
-
-    /// Contract with N payload items
-    Contract(usize),
-
-    /// Extension opcode
+pub enum Instruction {
+    Push(usize), // size of the string
+    Drop,
+    Dup(usize),  // index of the item
+    Roll(usize), // index of the item
+    Const,
+    Var,
+    Alloc,
+    Mintime,
+    Maxtime,
+    Neg,
+    Add,
+    Mul,
+    Eq,
+    Range(u8), // bitwidth (1..64)
+    And,
+    Or,
+    Verify,
+    Blind,
+    Reblind,
+    Unblind,
+    Issue,
+    Borrow,
+    Retire,
+    Qty,
+    Flavor,
+    Cloak(usize, usize), // M inputs, N outputs
+    Import,
+    Export,
+    Input,
+    Output(usize),   // payload count
+    Contract(usize), // payload count
+    Nonce,
+    Log,
+    Signtx,
+    Call,
+    Left,
+    Right,
+    Delegate,
     Ext(u8),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub enum Op {
+pub enum Opcode {
     Push = 0x00,
     Drop = 0x01,
     Dup = 0x02,
@@ -87,13 +89,17 @@ pub enum Op {
 
 const MAX_OPCODE: u8 = 0x25;
 
-impl Op {
+impl Opcode {
     pub fn to_u8(self) -> u8 {
         unsafe { mem::transmute(self) }
     }
 
-    unsafe fn from_u8_unchecked(code: u8) -> Op {
-        mem::transmute(code)
+    pub fn from_u8(code: u8) -> Option<Opcode> {
+        if code > MAX_OPCODE {
+            None
+        } else {
+            unsafe { mem::transmute(code) }
+        }
     }
 }
 
@@ -103,50 +109,71 @@ impl Instruction {
     /// (4 for the LE32 length prefix).
     ///
     /// Return `None` if there is not enough bytes to parse an instruction.
-    fn parse(program: &[u8]) -> Option<Instruction> {
+    pub fn parse(program: &[u8]) -> Option<(Instruction, usize)> {
         if program.len() == 0 {
             return None;
         }
 
-        let opcode = program[0];
+        let byte = program[0];
         let immdata = &program[1..];
 
-        if opcode > MAX_OPCODE {
-            return Some((Instruction::Ext(opcode), 1));
-        }
+        let opcode = match Opcode::from_u8(byte) {
+            None => {
+                return Some((Instruction::Ext(byte), 1));
+            }
+            Some(op) => op,
+        };
 
-        // opcode is checked to be in a valid range above.
-        let op = unsafe { Op::from_u8_unchecked(opcode) };
-
-        match op {
-            Op::Push => {
+        match opcode {
+            Opcode::Push => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let strlen = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Push(strlen), 1 + 4 + strlen))
             }
-            Op::Dup => {
+            Opcode::Drop => Some((Instruction::Drop, 1)),
+            Opcode::Dup => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let idx = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Dup(idx), 1 + 4))
             }
-            Op::Roll => {
+            Opcode::Roll => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let idx = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Roll(idx), 1 + 4))
             }
-            Op::Range => {
+            Opcode::Const => Some((Instruction::Const, 1)),
+            Opcode::Var => Some((Instruction::Var, 1)),
+            Opcode::Alloc => Some((Instruction::Alloc, 1)),
+            Opcode::Mintime => Some((Instruction::Mintime, 1)),
+            Opcode::Maxtime => Some((Instruction::Maxtime, 1)),
+            Opcode::Neg => Some((Instruction::Neg, 1)),
+            Opcode::Add => Some((Instruction::Add, 1)),
+            Opcode::Mul => Some((Instruction::Mul, 1)),
+            Opcode::Eq => Some((Instruction::Eq, 1)),
+            Opcode::Range => {
                 if immdata.len() < 1 {
                     return None;
                 }
                 Some((Instruction::Range(immdata[0]), 1 + 1))
             }
-            Op::Cloak => {
+            Opcode::And => Some((Instruction::And, 1)),
+            Opcode::Or => Some((Instruction::Or, 1)),
+            Opcode::Verify => Some((Instruction::Verify, 1)),
+            Opcode::Blind => Some((Instruction::Blind, 1)),
+            Opcode::Reblind => Some((Instruction::Reblind, 1)),
+            Opcode::Unblind => Some((Instruction::Unblind, 1)),
+            Opcode::Issue => Some((Instruction::Issue, 1)),
+            Opcode::Borrow => Some((Instruction::Borrow, 1)),
+            Opcode::Retire => Some((Instruction::Retire, 1)),
+            Opcode::Qty => Some((Instruction::Qty, 1)),
+            Opcode::Flavor => Some((Instruction::Flavor, 1)),
+            Opcode::Cloak => {
                 if immdata.len() < 8 {
                     return None;
                 }
@@ -154,21 +181,30 @@ impl Instruction {
                 let n = LittleEndian::read_u32(&immdata[4..]) as usize;
                 Some((Instruction::Cloak(m, n), 1 + 8))
             }
-            Op::Output => {
+            Opcode::Import => Some((Instruction::Import, 1)),
+            Opcode::Export => Some((Instruction::Export, 1)),
+            Opcode::Input => Some((Instruction::Input, 1)),
+            Opcode::Output => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let k = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Output(k), 1 + 4))
             }
-            Op::Contract => {
+            Opcode::Contract => {
                 if immdata.len() < 4 {
                     return None;
                 }
                 let k = LittleEndian::read_u32(immdata) as usize;
                 Some((Instruction::Contract(k), 1 + 4))
             }
-            _ => Some((Instruction::Other(op), 1)),
+            Opcode::Nonce => Some((Instruction::Nonce, 1)),
+            Opcode::Log => Some((Instruction::Log, 1)),
+            Opcode::Signtx => Some((Instruction::Signtx, 1)),
+            Opcode::Call => Some((Instruction::Call, 1)),
+            Opcode::Left => Some((Instruction::Left, 1)),
+            Opcode::Right => Some((Instruction::Right, 1)),
+            Opcode::Delegate => Some((Instruction::Delegate, 1)),
         }
     }
 }

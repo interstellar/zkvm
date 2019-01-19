@@ -1,15 +1,15 @@
-use merlin::Transcript;
-use bulletproofs::{PedersenGens,BulletproofGens};
 use bulletproofs::r1cs;
 use bulletproofs::r1cs::R1CSProof;
+use bulletproofs::{BulletproofGens, PedersenGens};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
+use merlin::Transcript;
 
 use crate::errors::VMError;
+use crate::ops::Instruction;
 use crate::point_ops::PointOp;
 use crate::predicate::Predicate;
 use crate::signature::Signature;
-use crate::ops::Instruction;
 
 pub const CURRENT_TX_VERSION: u64 = 1;
 
@@ -38,7 +38,6 @@ pub struct Tx {
 pub struct VerifiedTx {
     /// Transaction ID
     pub txid: [u8; 32],
-
     // TBD: list of txlog inputs, outputs and nonces to be inserted/deleted in the blockchain state.
 }
 
@@ -61,13 +60,12 @@ struct VM<'tx, 'transcript, 'gens> {
     signtx_keys: Vec<CompressedRistretto>,
     deferred_operations: Vec<PointOp>,
     variables: Vec<VariableCommitment>,
-    cs: r1cs::Verifier<'transcript, 'gens>
+    cs: r1cs::Verifier<'transcript, 'gens>,
 }
 
 impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     /// Creates a new instance of ZkVM with the appropriate parameters
     pub fn verify(tx: &Tx, bp_gens: &BulletproofGens) -> Result<VerifiedTx, VMError> {
-    
         // Allow extension opcodes if tx version is above the currently supported one.
         let extension = tx.version > CURRENT_TX_VERSION;
 
@@ -135,15 +133,11 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let instr = Instruction::parse(&self.current_run.program[self.current_run.offset..])
             .ok_or(VMError::MalformedInstruction)?;
 
-        match instr {
-            
-        }
+        match instr {}
 
         return Ok(true);
     }
-
 }
-
 
 enum Item<'tx> {
     Data(Data<'tx>),
