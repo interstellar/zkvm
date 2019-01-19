@@ -10,4 +10,8 @@ pub enum VMError {
     /// This error occurs when a point is not a valid compressed Ristretto point
     #[fail(display = "Point decoding failed.")]
     InvalidPoint,
+
+    /// This error occurs when VM instruction is malformed
+    #[fail(display = "Instruction is malformed.")]
+    MalformedInstruction,
 }

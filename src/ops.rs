@@ -1,36 +1,45 @@
 use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
-const MAX_OPCODE: u8 = 0x25;
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Instruction {
+    op: Op,
+    kind: InstructionKind,
+
+    /// Size that the instruction occupies in the program string.
+    /// E.g. a push instruction with 5-byte string occupies 1+4+5=10 bytes
+    /// (4 for the LE32 length prefix).
+    size: usize,
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Instruction {
-    /// Represents a data string with a specified length
+enum InstructionKind {
+    /// Instruction without any immediate data
+    Plain,
+
+    /// Data string with a specified length
     Push(usize),
 
-    /// Represents a dup of an item at a given index from the top of the stack
+    /// Dup of an item at a given index from the top of the stack
     Dup(usize),
 
-    /// Represents a roll of an item from a given index from the top of the stack.
+    /// Roll of an item from a given index from the top of the stack.
     Roll(usize),
 
-    /// Represents a range proof with a given width (1..64)
+    /// Range proof with a given width (1..64)
     Range(u8),
 
-    /// Represents a cloak operation between M inputs and N outputs
+    /// Cloak operation between M inputs and N outputs
     Cloak(usize, usize),
 
-    /// Represents an output with N payload items
+    /// Output with N payload items
     Output(usize),
 
-    /// Represents a contract with N payload items
+    /// Contract with N payload items
     Contract(usize),
 
-    /// Represents all other supported instructions without any immediate data (plain opcodes)
-    Other(Op),
-
-    /// Unsupported instruction code
-    Unsupported(u8),
+    /// Extension opcode
+    Ext(u8),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -76,6 +85,8 @@ pub enum Op {
     Delegate = MAX_OPCODE,
 }
 
+const MAX_OPCODE: u8 = 0x25;
+
 impl Op {
     pub fn to_u8(self) -> u8 {
         unsafe { mem::transmute(self) }
@@ -92,7 +103,7 @@ impl Instruction {
     /// (4 for the LE32 length prefix).
     ///
     /// Return `None` if there is not enough bytes to parse an instruction.
-    pub fn parse(program: &[u8]) -> Option<(Instruction, usize)> {
+    fn parse(program: &[u8]) -> Option<Instruction> {
         if program.len() == 0 {
             return None;
         }
@@ -101,7 +112,7 @@ impl Instruction {
         let immdata = &program[1..];
 
         if opcode > MAX_OPCODE {
-            return Some((Instruction::Unsupported(opcode), 1));
+            return Some((Instruction::Ext(opcode), 1));
         }
 
         // opcode is checked to be in a valid range above.
