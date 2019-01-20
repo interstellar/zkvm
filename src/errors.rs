@@ -14,4 +14,16 @@ pub enum VMError {
     /// This error occurs when VM instruction is malformed
     #[fail(display = "Instruction is malformed.")]
     MalformedInstruction,
+
+    /// This error occurs when an instruction requires a copyable type, but a linear type is encountered.
+    #[fail(display = "Item is not a copyable type.")]
+    TypeNotCopyable,
+
+    /// This error occurs when an instruction requires a copyable type, but a linear type is encountered.
+    #[fail(display = "Item is not a data string.")]
+    TypeNotData,
+
+    /// This error occurs when VM does not have enough items on the stack
+    #[fail(display = "Stack does not have enough items")]
+    StackUnderflow,
 }

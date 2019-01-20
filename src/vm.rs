@@ -130,21 +130,82 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
 
         // Read the next instruction and advance the program state.
-        let instr = Instruction::parse(&self.current_run.program[self.current_run.offset..])
+        let (instr, instrsize) = Instruction::parse(&self.current_run.program[self.current_run.offset..])
             .ok_or(VMError::MalformedInstruction)?;
 
-        match instr {}
+        // Immediately update the offset for the next instructions
+        self.current_run.offset += instrsize;
+
+        match instr {
+            Instruction::Push(len) => {
+                let range = self.current_run.offset-len .. self.current_run.offset;
+                self.stack.push(Item::Data(Data{
+                    bytes: &self.current_run.program[range]
+                }));
+            },
+            Instruction::Drop => {
+                self.stack.pop().ok_or(VMError::StackUnderflow)?.to_copyable()?
+            },
+            Instruction::Dup(i) => {
+                if i >= self.stack.len() {
+                    return Err(VMError::StackUnderflow);
+                }
+                let item = self.stack[self.stack.len() - i - 1].copy()?;
+                self.stack.push(item);
+            },
+            Instruction::Roll(i) => {
+                if i >= self.stack.len() {
+                    return Err(VMError::StackUnderflow);
+                }
+                let item = self.stack.remove(self.stack.len() - i - 1);
+                self.stack.push(item);
+            },
+            Instruction::Input => {
+                // TBD: pop parse input structure
+                self.stack.pop().ok_or()
+            }
+            _ => unimplemented!()
+        }
 
         return Ok(true);
     }
+
+    
 }
 
 enum Item<'tx> {
     Data(Data<'tx>),
     Contract(Contract<'tx>),
     Value(Value<'tx>),
+    WideValue(WideValue<'tx>),
 }
 
+impl<'tx> Item<'tx> {
+    fn to_copyable(self) -> Result<Item<'tx>, VMError> {
+        match self {
+            Item::Data(x) => Ok(Item::Data(x)),
+            // TBD: variable, expression, constraint are also copyable
+            _ => Err(VMError::TypeNotCopyable)
+        }
+    }
+
+    fn to_data(self) -> Result<Data<'tx>, VMError> {
+        match self {
+            Item::Data(x) => Ok(x),
+            _ => Err(VMError::TypeNotData)
+        }
+    }
+
+    fn copy(&self) -> Result<Item<'tx>, VMError> {
+        match self {
+            Item::Data(x) => Ok(Item::Data(x)),
+            // TBD: variable, expression, constraint are also copyable
+            _ => Err(VMError::TypeNotCopyable)
+        }
+    }
+}
+
+#[derive(Copy,Clone)]
 struct Data<'tx> {
     bytes: &'tx [u8],
 }
@@ -155,8 +216,9 @@ struct Contract<'tx> {
 }
 
 struct Value<'tx> {
-    payload: Vec<Item<'tx>>,
-    predicate: Predicate,
+}
+
+struct WideValue<'tx> {
 }
 
 struct Run<'tx> {
