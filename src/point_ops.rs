@@ -48,6 +48,11 @@ impl PointOp {
 
         Ok(())
     }
+
+    /// Verifies a batch of point operations using one multi-scalar multiplication
+    pub fn verify_batch(batch: &[PointOp]) -> Result<(), VMError> {
+        unimplemented!()
+    }
 }
 
 #[cfg(test)]

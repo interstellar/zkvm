@@ -342,12 +342,9 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
     fn retire(&mut self) -> Result<(), VMError> {
         let value = self.pop_item()?.to_value()?;
-
         let qty = self.get_variable_commitment(value.qty);
         let flv = self.get_variable_commitment(value.flv);
-
         self.txlog.push(LogEntry::Retire(qty, flv));
-
         Ok(())
     }
 
@@ -403,9 +400,14 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         unimplemented!()
     }
 
+    // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
-        // TBD:
-        unimplemented!()
+        let contract = self.pop_item()?.to_contract()?;
+        self.signtx_keys.push(contract.predicate.0);
+        for item in contract.payload.into_iter() {
+            self.push_item(item);
+        }
+        Ok(())
     }
 
     fn ext(&mut self, _: u8) -> Result<(), VMError> {

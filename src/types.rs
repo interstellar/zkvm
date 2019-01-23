@@ -112,6 +112,14 @@ impl<'tx> Item<'tx> {
             _ => Err(VMError::TypeNotWideValue),
         }
     }
+
+    // Downcasts to Contract type
+    pub fn to_contract(self) -> Result<Contract<'tx>, VMError> {
+        match self {
+            Item::Contract(c) => Ok(c),
+            _ => Err(VMError::TypeNotContract),
+        }
+    }
 }
 
 impl<'tx> Data<'tx> {
