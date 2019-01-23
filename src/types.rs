@@ -3,8 +3,11 @@
 use crate::errors::VMError;
 use crate::predicate::Predicate;
 
+use crate::transcript::TranscriptProtocol;
+use bulletproofs::r1cs;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
+use merlin::Transcript;
 
 #[derive(Debug)]
 pub enum Item<'tx> {
@@ -45,14 +48,14 @@ pub struct WideValue {
     // TBD
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Variable {
     pub(crate) index: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct Expression {
-    // TBD
+    pub(crate) terms: Vec<(r1cs::Variable, Scalar)>,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +64,15 @@ pub struct Constraint {
 }
 
 impl<'tx> Item<'tx> {
+    // Downcasts to a portable type
+    pub fn to_portable(self) -> Result<PortableItem<'tx>, VMError> {
+        match self {
+            Item::Data(x) => Ok(PortableItem::Data(x)),
+            Item::Value(x) => Ok(PortableItem::Value(x)),
+            _ => Err(VMError::TypeNotPortable),
+        }
+    }
+
     // Downcasts to Data type
     pub fn to_data(self) -> Result<Data<'tx>, VMError> {
         match self {
@@ -77,12 +89,11 @@ impl<'tx> Item<'tx> {
         }
     }
 
-    // Downcasts to Expression type (Variable is casted to Expression)
+    // Downcasts to Expression type (Variable is NOT casted to Expression)
     pub fn to_expression(self) -> Result<Expression, VMError> {
         match self {
-            Item::Variable(v) => Ok(v.into()),
             Item::Expression(expr) => Ok(expr),
-            _ => Err(VMError::TypeNotVariable),
+            _ => Err(VMError::TypeNotExpression),
         }
     }
 
@@ -94,10 +105,9 @@ impl<'tx> Item<'tx> {
         }
     }
 
-    // Downcasts to WideValue type (Value is casted to WideValue)
+    // Downcasts to WideValue type (Value is NOT casted to WideValue)
     pub fn to_wide_value(self) -> Result<WideValue, VMError> {
         match self {
-            Item::Value(v) => Ok(v.into()),
             Item::WideValue(w) => Ok(w),
             _ => Err(VMError::TypeNotWideValue),
         }
@@ -131,31 +141,16 @@ impl<'tx> Data<'tx> {
     }
 }
 
-
-// Upcasting Value to Wide Value
-
-impl From<Value> for WideValue {
-    fn from(_: Value) -> Self {
-        WideValue{
-            // TBD.
-        }
+impl Value {
+    /// Computes a flavor as defined by the `issue` instruction from a predicate.
+    pub fn issue_flavor(predicate: &Predicate) -> Scalar {
+        let mut t = Transcript::new(b"ZkVM.issue");
+        t.commit_bytes(b"predicate", predicate.0.as_bytes());
+        t.challenge_scalar(b"flavor")
     }
 }
-
-// Upcasting Variable to Expression
-
-impl From<Variable> for Expression {
-    fn from(x: Variable) -> Self {
-        Expression {
-            // TBD
-        }
-    }
-}
-
-
 
 // Upcasting all types to Item
-
 
 impl<'tx> From<Data<'tx>> for Item<'tx> {
     fn from(x: Data<'tx>) -> Self {

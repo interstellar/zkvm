@@ -23,6 +23,10 @@ pub enum VMError {
     #[fail(display = "Item is not a copyable type.")]
     TypeNotCopyable,
 
+    /// This error occurs when an instruction requires a portable type, but a non-portable type is encountered.
+    #[fail(display = "Item is not a portable type.")]
+    TypeNotPortable,
+
     /// This error occurs when an instruction requires a data type.
     #[fail(display = "Item is not a data string.")]
     TypeNotData,

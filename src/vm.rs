@@ -5,13 +5,14 @@ use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
+use crate::encoding;
 use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::point_ops::PointOp;
 use crate::predicate::Predicate;
 use crate::signature::Signature;
+use crate::transcript::TranscriptProtocol;
 use crate::types::*;
-use crate::encoding;
 
 /// Current tx version determines which extension opcodes are treated as noops (see VM.extension flag).
 pub const CURRENT_VERSION: u64 = 1;
@@ -111,11 +112,10 @@ enum VariableCommitment {
     /// so its commitment is replaceable via `reblind`.
     Detached(CompressedRistretto),
 
-    /// Variable is attached to the CS yet and has index in CS,
+    /// Variable is attached to the CS yet and has an index in CS,
     /// so its commitment is no longer replaceable via `reblind`.
-    Attached(CompressedRistretto, usize),
+    Attached(CompressedRistretto, r1cs::Variable),
 }
-
 
 impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     /// Creates a new instance of ZkVM with the appropriate parameters
@@ -231,7 +231,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             Instruction::Unblind => unimplemented!(),
             Instruction::Issue => self.issue()?,
             Instruction::Borrow => unimplemented!(),
-            Instruction::Retire => unimplemented!(),
+            Instruction::Retire => self.retire()?,
             Instruction::Qty => unimplemented!(),
             Instruction::Flavor => unimplemented!(),
             Instruction::Cloak(m, n) => self.cloak(m, n)?,
@@ -239,10 +239,10 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             Instruction::Export => unimplemented!(),
             Instruction::Input => self.input()?,
             Instruction::Output(k) => self.output(k)?,
-            Instruction::Contract(_) => unimplemented!(),
+            Instruction::Contract(k) => self.contract(k)?,
             Instruction::Nonce => self.nonce()?,
             Instruction::Log => unimplemented!(),
-            Instruction::Signtx => unimplemented!(),
+            Instruction::Signtx => self.signtx()?,
             Instruction::Call => unimplemented!(),
             Instruction::Left => unimplemented!(),
             Instruction::Right => unimplemented!(),
@@ -313,43 +313,45 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let flv = self.pop_item()?.to_variable()?;
         let qty = self.pop_item()?.to_variable()?;
 
-        // TBD:
-        // 1. Pops [point](#point) `pred`.
-        // 2. Pops [variable](#variable-type) `flv`; if the variable is detached, attaches it.
-        // 3. Pops [variable](#variable-type) `qty`; if the variable is detached, attaches it.
-        // 4. Creates a [value](#value-type) with variables `qty` and `flv` for quantity and flavor, respectively.
-        // 5. Computes the _flavor_ scalar defined by the [predicate](#predicate) `pred` using the following [transcript-based](#transcript) protocol:
-        //     ```
-        //     T = Transcript("ZkVM.issue")
-        //     T.commit("predicate", pred)
-        //     flavor = T.challenge_scalar("flavor")
-        //     ```
-        // 6. Checks that the `flv` has unblinded commitment to `flavor` by [deferring the point operation](#deferred-point-operations):
-        //     ```
-        //     flv == flavor·B
-        //     ```
-        // 7. Adds a 64-bit range proof for the `qty` to the [constraint system](#constraint-system) (see [Cloak protocol](https://github.com/interstellar/spacesuit/blob/master/spec.md) for the range proof definition).
-        // 8. Adds an [issue entry](#issue-entry) to the [transaction log](#transaction-log).
-        // 9. Creates a [contract](#contract-type) with the value as the only [payload](#contract-payload), protected by the predicate `pred`.
+        let (flv_point, _) = self.attach_variable(flv);
+        let (qty_point, _) = self.attach_variable(qty);
 
-        // The value is now issued into the contract that must be unlocked
-        // using one of the contract instructions: [`signtx`](#signx), [`delegate`](#delegate) or [`call`](#call).
+        let value = Value { qty, flv };
 
-        // Fails if:
-        // * `pred` is not a valid [point](#point),
-        // * `flv` or `qty` are not [variable types](#variable-type).
+        let flv_scalar = Value::issue_flavor(&predicate);
+        // flv_point == flavor·B    ->   0 == -flv_point + flv_scalar·B
+        self.deferred_operations.push(PointOp {
+            primary: Some(flv_scalar),
+            secondary: None,
+            arbitrary: vec![(-Scalar::one(), flv_point)],
+        });
 
-        // let contract = Contract {
-        //     predicate,
-        //     payload: Vec::new(),
-        // };
-        // self.txlog.push(LogEntry::Issue(qty commitment, flv commitment));
-        // self.push_item(contract);
-        // self.unique = true;
-        unimplemented!();
+        let qty_expr = self.variable_to_expression(qty);
+        self.add_range_proof(64, qty_expr);
+
+        self.txlog.push(LogEntry::Issue(qty_point, flv_point));
+
+        let contract = Contract {
+            predicate,
+            payload: vec![PortableItem::Value(value)],
+        };
+
+        self.push_item(contract);
         Ok(())
     }
 
+    fn retire(&mut self) -> Result<(), VMError> {
+        let value = self.pop_item()?.to_value()?;
+
+        let qty = self.get_variable_commitment(value.qty);
+        let flv = self.get_variable_commitment(value.flv);
+
+        self.txlog.push(LogEntry::Retire(qty, flv));
+
+        Ok(())
+    }
+
+    /// _input_ **input** → _contract_
     fn input(&mut self) -> Result<(), VMError> {
         let serialized_input = self.pop_item()?.to_data()?;
         let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
@@ -359,13 +361,50 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         Ok(())
     }
 
+    /// _items... predicate_ **output:_k_** → ø
     fn output(&mut self, k: usize) -> Result<(), VMError> {
-        // TBD:
-        unimplemented!()
+        // !!! !!! !!!
+        // TBD: SPEC: do not force-attach the value variables to not pollute r1cs!
+        // !!! !!! !!!
+        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
+
+        if k > self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+        let payload = self
+            .stack
+            .drain(self.stack.len() - k..)
+            .map(|item| item.to_portable())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let output = self.encode_output(Contract { predicate, payload });
+        self.txlog.push(LogEntry::Output(output));
+        Ok(())
+    }
+
+    fn contract(&mut self, k: usize) -> Result<(), VMError> {
+        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
+
+        if k > self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+        let payload = self
+            .stack
+            .drain(self.stack.len() - k..)
+            .map(|item| item.to_portable())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        self.push_item(Contract { predicate, payload });
+        Ok(())
     }
 
     fn cloak(&mut self, m: usize, n: usize) -> Result<(), VMError> {
         // TBD:...
+        unimplemented!()
+    }
+
+    fn signtx(&mut self) -> Result<(), VMError> {
+        // TBD:
         unimplemented!()
     }
 
@@ -378,7 +417,11 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             Err(VMError::ExtensionsNotAllowed)
         }
     }
+}
 
+// Utility methods
+
+impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     fn pop_item(&mut self) -> Result<Item<'tx>, VMError> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
@@ -392,15 +435,53 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
     fn make_variable(&mut self, commitment: CompressedRistretto) -> Variable {
         let index = self.variable_commitments.len();
-        self.variable_commitments.push(VariableCommitment::Detached(commitment));
+        self.variable_commitments
+            .push(VariableCommitment::Detached(commitment));
         Variable { index }
     }
 
-    fn get_variable_commitment(&self, var: &Variable) -> &CompressedRistretto {
+    fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
         // This subscript never fails because the variable is created only via `make_variable`.
-        match &self.variable_commitments[var.index] {
+        match self.variable_commitments[var.index] {
             VariableCommitment::Detached(p) => p,
-            VariableCommitment::Attached(p,_) => p,
+            VariableCommitment::Attached(p, _) => p,
+        }
+    }
+
+    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
+        // This subscript never fails because the variable is created only via `make_variable`.
+        match self.variable_commitments[var.index] {
+            VariableCommitment::Detached(p) => {
+                let r1cs_var = self.cs.commit(p);
+                self.variable_commitments[var.index] = VariableCommitment::Attached(p, r1cs_var);
+                (p, r1cs_var)
+            }
+            VariableCommitment::Attached(p, r1cs_var) => (p, r1cs_var),
+        }
+    }
+
+    fn item_to_wide_value(&mut self, item: Item<'tx>) -> Result<WideValue, VMError> {
+        match item {
+            Item::Value(v) => Ok(WideValue{
+                // TBD
+            }),
+            Item::WideValue(w) => Ok(w),
+            _ => Err(VMError::TypeNotWideValue),
+        }
+    }
+
+    fn item_to_expression(&mut self, item: Item<'tx>) -> Result<Expression, VMError> {
+        match item {
+            Item::Variable(v) => Ok(self.variable_to_expression(v)),
+            Item::Expression(expr) => Ok(expr),
+            _ => Err(VMError::TypeNotExpression),
+        }
+    }
+
+    fn variable_to_expression(&mut self, var: Variable) -> Expression {
+        let (_, r1cs_var) = self.attach_variable(var);
+        Expression {
+            terms: vec![(r1cs_var, Scalar::one())],
         }
     }
 
@@ -462,7 +543,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                     let flv = self.make_variable(flv);
 
                     items = rest;
-                    PortableItem::Value(Value {qty, flv})
+                    PortableItem::Value(Value { qty, flv })
                 }
                 _ => return Err(VMError::FormatError),
             };
@@ -486,18 +567,22 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                 }
                 PortableItem::Value(v) => {
                     encoding::write_u8(VALUE_TYPE, &mut output);
-                    let qty = self.get_variable_commitment(&v.qty);
-                    let flv = self.get_variable_commitment(&v.flv);
-                    encoding::write_point(qty, &mut output);
-                    encoding::write_point(flv, &mut output);
+                    let qty = self.get_variable_commitment(v.qty);
+                    let flv = self.get_variable_commitment(v.flv);
+                    encoding::write_point(&qty, &mut output);
+                    encoding::write_point(&flv, &mut output);
                 }
             }
         }
 
-        output        
+        output
+    }
+
+    fn add_range_proof(&mut self, bitrange: usize, expr: Expression) {
+        // TBD: add a range proof condition on the given expression
+        unimplemented!()
     }
 }
-
 
 impl<'tx> Contract<'tx> {
     fn output_size(&self) -> usize {
@@ -505,7 +590,7 @@ impl<'tx> Contract<'tx> {
         for item in self.payload.iter() {
             match item {
                 PortableItem::Data(d) => size += 1 + 4 + d.bytes.len(),
-                PortableItem::Value(d) => size += 1 + 64,
+                PortableItem::Value(_) => size += 1 + 64,
             }
         }
         size
@@ -523,4 +608,3 @@ impl UTXO {
         utxo
     }
 }
-
