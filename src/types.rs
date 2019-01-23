@@ -36,7 +36,8 @@ pub struct Contract<'tx> {
 
 #[derive(Debug)]
 pub struct Value {
-    // TBD
+    pub(crate) qty: Variable,
+    pub(crate) flv: Variable,
 }
 
 #[derive(Debug)]
@@ -44,17 +45,9 @@ pub struct WideValue {
     // TBD
 }
 
-impl From<Value> for WideValue {
-    fn from(_: Value) -> Self {
-        WideValue{
-            // TBD.
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct Variable {
-    // TBD
+    pub(crate) index: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +73,15 @@ impl<'tx> Item<'tx> {
     pub fn to_variable(self) -> Result<Variable, VMError> {
         match self {
             Item::Variable(v) => Ok(v),
+            _ => Err(VMError::TypeNotVariable),
+        }
+    }
+
+    // Downcasts to Expression type (Variable is casted to Expression)
+    pub fn to_expression(self) -> Result<Expression, VMError> {
+        match self {
+            Item::Variable(v) => Ok(v.into()),
+            Item::Expression(expr) => Ok(expr),
             _ => Err(VMError::TypeNotVariable),
         }
     }
@@ -129,6 +131,32 @@ impl<'tx> Data<'tx> {
     }
 }
 
+
+// Upcasting Value to Wide Value
+
+impl From<Value> for WideValue {
+    fn from(_: Value) -> Self {
+        WideValue{
+            // TBD.
+        }
+    }
+}
+
+// Upcasting Variable to Expression
+
+impl From<Variable> for Expression {
+    fn from(x: Variable) -> Self {
+        Expression {
+            // TBD
+        }
+    }
+}
+
+
+
+// Upcasting all types to Item
+
+
 impl<'tx> From<Data<'tx>> for Item<'tx> {
     fn from(x: Data<'tx>) -> Self {
         Item::Data(x)
@@ -150,6 +178,24 @@ impl<'tx> From<WideValue> for Item<'tx> {
 impl<'tx> From<Contract<'tx>> for Item<'tx> {
     fn from(x: Contract<'tx>) -> Self {
         Item::Contract(x)
+    }
+}
+
+impl<'tx> From<Variable> for Item<'tx> {
+    fn from(x: Variable) -> Self {
+        Item::Variable(x)
+    }
+}
+
+impl<'tx> From<Expression> for Item<'tx> {
+    fn from(x: Expression) -> Self {
+        Item::Expression(x)
+    }
+}
+
+impl<'tx> From<Constraint> for Item<'tx> {
+    fn from(x: Constraint) -> Self {
+        Item::Constraint(x)
     }
 }
 

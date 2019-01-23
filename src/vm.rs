@@ -10,8 +10,63 @@ use crate::ops::Instruction;
 use crate::point_ops::PointOp;
 use crate::predicate::Predicate;
 use crate::signature::Signature;
-use crate::tx::{self, LogEntry, Tx, VerifiedTx};
 use crate::types::*;
+use crate::encoding;
+
+/// Current tx version determines which extension opcodes are treated as noops (see VM.extension flag).
+pub const CURRENT_VERSION: u64 = 1;
+
+/// Prefix for the data type in the Output Structure
+pub const DATA_TYPE: u8 = 0x00;
+
+/// Prefix for the value type in the Output Structure
+pub const VALUE_TYPE: u8 = 0x01;
+
+/// Instance of a transaction that contains all necessary data to validate it.
+pub struct Tx {
+    /// Version of the transaction
+    pub version: u64,
+
+    /// Timestamp before which tx is invalid (sec)
+    pub mintime: u64,
+
+    /// Timestamp after which tx is invalid (sec)
+    pub maxtime: u64,
+
+    /// Program representing the transaction
+    pub program: Vec<u8>,
+
+    /// Aggregated signature of the txid
+    pub signature: Signature,
+
+    /// Constraint system proof for all the constraints
+    pub proof: R1CSProof,
+}
+
+/// Represents a verified transaction: a txid and a list of state updates.
+pub struct VerifiedTx {
+    /// Transaction ID
+    pub txid: [u8; 32],
+    // TBD: list of txlog inputs, outputs and nonces to be inserted/deleted in the blockchain state.
+}
+
+/// Entry in a transaction log
+pub enum LogEntry<'tx> {
+    Issue(CompressedRistretto, CompressedRistretto),
+    Retire(CompressedRistretto, CompressedRistretto),
+    Input(UTXO),
+    Nonce(Predicate, u64),
+    Output(Vec<u8>),
+    Data(Data<'tx>),
+    Import, // TBD: parameters
+    Export, // TBD: parameters
+}
+
+/// Transaction ID is a unique 32-byte identifier of a transaction
+pub struct TxID([u8; 32]);
+
+/// UTXO is a unique 32-byte identifier of a transaction output
+pub struct UTXO([u8; 32]);
 
 /// The ZkVM state used to validate a transaction.
 pub struct VM<'tx, 'transcript, 'gens> {
@@ -38,15 +93,35 @@ pub struct VM<'tx, 'transcript, 'gens> {
     txlog: Vec<LogEntry<'tx>>,
     signtx_keys: Vec<CompressedRistretto>,
     deferred_operations: Vec<PointOp>,
-    variables: Vec<VariableCommitment>,
+    variable_commitments: Vec<VariableCommitment>,
     cs: r1cs::Verifier<'transcript, 'gens>,
 }
 
+/// An state of running a single program string.
+/// VM consists of a stack of such _Runs_.
+struct Run<'tx> {
+    program: &'tx [u8],
+    offset: usize,
+}
+
+/// And indirect reference to a high-level variable within a constraint system.
+/// Variable types store index of such commitments that allows replacing them.
+enum VariableCommitment {
+    /// Variable is not attached to the CS yet,
+    /// so its commitment is replaceable via `reblind`.
+    Detached(CompressedRistretto),
+
+    /// Variable is attached to the CS yet and has index in CS,
+    /// so its commitment is no longer replaceable via `reblind`.
+    Attached(CompressedRistretto, usize),
+}
+
+
 impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     /// Creates a new instance of ZkVM with the appropriate parameters
-    pub fn verify(tx: &Tx, bp_gens: &BulletproofGens) -> Result<VerifiedTx, VMError> {
+    pub fn verify_tx(tx: &Tx, bp_gens: &BulletproofGens) -> Result<VerifiedTx, VMError> {
         // Allow extension opcodes if tx version is above the currently supported one.
-        let extension = tx.version > tx::CURRENT_VERSION;
+        let extension = tx.version > CURRENT_VERSION;
 
         // Construct a CS verifier to be used during ZkVM execution.
         let mut r1cs_transcript = Transcript::new(b"ZkVM.r1cs"); // XXX: spec does not specify this
@@ -73,7 +148,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             txlog: Vec::new(),
             signtx_keys: Vec::new(),
             deferred_operations: Vec::new(),
-            variables: Vec::new(),
+            variable_commitments: Vec::new(),
             cs,
         };
 
@@ -94,6 +169,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         unimplemented!()
     }
 
+    /// Runs through the entire program and nested programs until completion.
     fn run(&mut self) -> Result<(), VMError> {
         loop {
             if !self.step()? {
@@ -103,19 +179,25 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         Ok(())
     }
 
+    /// Returns `true` if we need to continue execution,
+    /// `false` if the VM execution is completed.
+    fn finish_run(&mut self) -> bool {
+        // Do we have more programs to run?
+        if let Some(run) = self.run_stack.pop() {
+            // Continue with the previously remembered program
+            self.current_run = run;
+            return true;
+        }
+
+        // Finish the execution
+        return false;
+    }
+
     /// Returns a flag indicating whether to continue the execution
     fn step(&mut self) -> Result<bool, VMError> {
         // Have we reached the end of the current program?
         if self.current_run.offset == self.current_run.program.len() {
-            // Do we have more programs to run?
-            if let Some(run) = self.run_stack.pop() {
-                // Continue with the previously remembered program
-                self.current_run = run;
-                return Ok(true);
-            } else {
-                // Finish the execution
-                return Ok(false);
-            }
+            return Ok(self.finish_run());
         }
 
         // Read the next instruction and advance the program state.
@@ -270,7 +352,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
     fn input(&mut self) -> Result<(), VMError> {
         let serialized_input = self.pop_item()?.to_data()?;
-        let (contract, _, utxo) = tx::parse_input(serialized_input.bytes)?;
+        let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
         self.push_item(contract);
         self.txlog.push(LogEntry::Input(utxo));
         self.unique = true;
@@ -307,19 +389,138 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     {
         self.stack.push(item.into())
     }
+
+    fn make_variable(&mut self, commitment: CompressedRistretto) -> Variable {
+        let index = self.variable_commitments.len();
+        self.variable_commitments.push(VariableCommitment::Detached(commitment));
+        Variable { index }
+    }
+
+    fn get_variable_commitment(&self, var: &Variable) -> &CompressedRistretto {
+        // This subscript never fails because the variable is created only via `make_variable`.
+        match &self.variable_commitments[var.index] {
+            VariableCommitment::Detached(p) => p,
+            VariableCommitment::Attached(p,_) => p,
+        }
+    }
+
+    /// Parses the input and returns the instantiated contract, txid and UTXO identifier.
+    fn decode_input(&mut self, input: &'tx [u8]) -> Result<(Contract<'tx>, TxID, UTXO), VMError> {
+        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
+        // TBD: SPEC: change the spec - we are moving txid in the front
+        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
+
+        //        Input  =  PreviousTxID || PreviousOutput
+        // PreviousTxID  =  <32 bytes>
+
+        let (txid, output) = encoding::read_u8x32(input)?;
+        let txid = TxID(txid);
+        let contract = self.decode_output(output)?;
+        let utxo = UTXO::from_output(output, &txid);
+        Ok((contract, txid, utxo))
+    }
+
+    /// Parses the output and returns an instantiated contract.
+    fn decode_output(&mut self, output: &'tx [u8]) -> Result<(Contract<'tx>), VMError> {
+        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
+        // TBD: SPEC: change the spec - we are moving predicate up front
+        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
+
+        //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
+        // Predicate  =  <32 bytes>
+        //      Item  =  enum { Data, Value }
+        //      Data  =  0x00  ||  LE32(len)  ||  <bytes>
+        //     Value  =  0x01  ||  <32 bytes> ||  <32 bytes>
+
+        let (predicate, payload) = encoding::read_point(output)?;
+        let predicate = Predicate(predicate);
+
+        let (k, mut items) = encoding::read_usize(payload)?;
+
+        // sanity check: avoid allocating unreasonably more memory
+        // just because an untrusted length prefix says so.
+        if k > items.len() {
+            return Err(VMError::FormatError);
+        }
+
+        let mut payload: Vec<PortableItem<'tx>> = Vec::with_capacity(k);
+        for _ in 0..k {
+            let (item_type, rest) = encoding::read_u8(items)?;
+            let item = match item_type {
+                DATA_TYPE => {
+                    let (len, rest) = encoding::read_usize(rest)?;
+                    let (bytes, rest) = encoding::read_bytes(len, rest)?;
+                    items = rest;
+                    PortableItem::Data(Data { bytes })
+                }
+                VALUE_TYPE => {
+                    let (qty, rest) = encoding::read_point(rest)?;
+                    let (flv, rest) = encoding::read_point(rest)?;
+
+                    // TBD: SPEC: specify the order of creating these variables
+                    let qty = self.make_variable(qty);
+                    let flv = self.make_variable(flv);
+
+                    items = rest;
+                    PortableItem::Value(Value {qty, flv})
+                }
+                _ => return Err(VMError::FormatError),
+            };
+            payload.push(item);
+        }
+
+        Ok(Contract { predicate, payload })
+    }
+
+    fn encode_output(&mut self, contract: Contract<'tx>) -> Vec<u8> {
+        let mut output = Vec::with_capacity(contract.output_size());
+        encoding::write_point(&contract.predicate.0, &mut output);
+        encoding::write_u32(contract.payload.len() as u32, &mut output);
+
+        for item in contract.payload.iter() {
+            match item {
+                PortableItem::Data(d) => {
+                    encoding::write_u8(DATA_TYPE, &mut output);
+                    encoding::write_u32(d.bytes.len() as u32, &mut output);
+                    encoding::write_bytes(d.bytes, &mut output);
+                }
+                PortableItem::Value(v) => {
+                    encoding::write_u8(VALUE_TYPE, &mut output);
+                    let qty = self.get_variable_commitment(&v.qty);
+                    let flv = self.get_variable_commitment(&v.flv);
+                    encoding::write_point(qty, &mut output);
+                    encoding::write_point(flv, &mut output);
+                }
+            }
+        }
+
+        output        
+    }
 }
 
-struct Run<'tx> {
-    program: &'tx [u8],
-    offset: usize,
+
+impl<'tx> Contract<'tx> {
+    fn output_size(&self) -> usize {
+        let mut size = 32 + 4;
+        for item in self.payload.iter() {
+            match item {
+                PortableItem::Data(d) => size += 1 + 4 + d.bytes.len(),
+                PortableItem::Value(d) => size += 1 + 64,
+            }
+        }
+        size
+    }
 }
 
-enum VariableCommitment {
-    /// Variable is not attached to the CS yet,
-    /// so its commitment is replaceable via `reblind`.
-    Detached(CompressedRistretto),
-
-    /// Variable is attached to the CS yet and has index in CS,
-    /// so its commitment is no longer replaceable via `reblind`.
-    Attached(CompressedRistretto, usize),
+impl UTXO {
+    /// Computes UTXO identifier from an output and transaction id.
+    pub fn from_output(output: &[u8], txid: &TxID) -> Self {
+        let mut t = Transcript::new(b"ZkVM.utxo");
+        t.commit_bytes(b"txid", &txid.0);
+        t.commit_bytes(b"output", &output);
+        let mut utxo = UTXO([0u8; 32]);
+        t.challenge_bytes(b"id", &mut utxo.0);
+        utxo
+    }
 }
+
