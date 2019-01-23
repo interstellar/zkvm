@@ -119,31 +119,53 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
 
         // Read the next instruction and advance the program state.
-        let (instr, instrsize) =
+        let (instr, instr_size) =
             Instruction::parse(&self.current_run.program[self.current_run.offset..])
                 .ok_or(VMError::FormatError)?;
 
         // Immediately update the offset for the next instructions
-        self.current_run.offset += instrsize;
+        self.current_run.offset += instr_size;
 
         match instr {
             Instruction::Push(len) => self.pushdata(len)?,
             Instruction::Drop => self.drop()?,
             Instruction::Dup(i) => self.dup(i)?,
             Instruction::Roll(i) => self.roll(i)?,
-            Instruction::Nonce => self.nonce()?,
+            Instruction::Const => unimplemented!(),
+            Instruction::Var => unimplemented!(),
+            Instruction::Alloc => unimplemented!(),
+            Instruction::Mintime => unimplemented!(),
+            Instruction::Maxtime => unimplemented!(),
+            Instruction::Neg => unimplemented!(),
+            Instruction::Add => unimplemented!(),
+            Instruction::Mul => unimplemented!(),
+            Instruction::Eq => unimplemented!(),
+            Instruction::Range(_) => unimplemented!(),
+            Instruction::And => unimplemented!(),
+            Instruction::Or => unimplemented!(),
+            Instruction::Verify => unimplemented!(),
+            Instruction::Blind => unimplemented!(),
+            Instruction::Reblind => unimplemented!(),
+            Instruction::Unblind => unimplemented!(),
             Instruction::Issue => self.issue()?,
+            Instruction::Borrow => unimplemented!(),
+            Instruction::Retire => unimplemented!(),
+            Instruction::Qty => unimplemented!(),
+            Instruction::Flavor => unimplemented!(),
+            Instruction::Cloak(m,n) => self.cloak(m,n)?,
+            Instruction::Import => unimplemented!(),
+            Instruction::Export => unimplemented!(),
             Instruction::Input => self.input()?,
             Instruction::Output(k) => self.output(k)?,
-            Instruction::Ext(_) => {
-                if self.extension {
-                    // if extensions are allowed by tx version,
-                    // unknown opcodes are treated as no-ops.
-                } else {
-                    return Err(VMError::ExtensionsNotAllowed);
-                }
-            }
-            _ => unimplemented!(),
+            Instruction::Contract(_) => unimplemented!(),
+            Instruction::Nonce => self.nonce()?,
+            Instruction::Log => unimplemented!(),
+            Instruction::Signtx => unimplemented!(),
+            Instruction::Call => unimplemented!(),
+            Instruction::Left => unimplemented!(),
+            Instruction::Right => unimplemented!(),
+            Instruction::Delegate => unimplemented!(),
+            Instruction::Ext(opcode) => self.ext(opcode)?,
         }
 
         return Ok(true);
@@ -247,6 +269,21 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     fn output(&mut self, k: usize) -> Result<(), VMError> {
         // TBD:
         unimplemented!()
+    }
+
+    fn cloak(&mut self, m: usize, n: usize) -> Result<(), VMError> {
+        // TBD:...
+        unimplemented!()
+    }
+
+    fn ext(&mut self, _: u8) -> Result<(), VMError> {
+        if self.extension {
+            // if extensions are allowed by tx version,
+            // unknown opcodes are treated as no-ops.
+            Ok(())
+        } else {
+            Err(VMError::ExtensionsNotAllowed)
+        }
     }
 
     fn pop_item(&mut self) -> Result<Item<'tx>, VMError> {

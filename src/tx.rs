@@ -182,7 +182,7 @@ impl<'tx> Contract<'tx> {
 impl UTXO {
     /// Computes UTXO identifier from an output and transaction id.
     pub fn from_output(output: &[u8], txid: &TxID) -> Self {
-        let t = Transcript::new(b"ZkVM.utxo");
+        let mut t = Transcript::new(b"ZkVM.utxo");
         t.commit_bytes(b"txid", &txid.0);
         t.commit_bytes(b"output", &output);
         let mut utxo = UTXO([0u8; 32]);
