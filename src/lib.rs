@@ -10,13 +10,13 @@ extern crate subtle;
 #[macro_use]
 extern crate failure;
 
+mod encoding;
 mod errors;
 mod ops;
 mod point_ops;
 mod predicate;
 mod signature;
 mod transcript;
-mod encoding;
-mod types;
 mod tx;
+mod types;
 mod vm;

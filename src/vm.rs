@@ -10,8 +10,8 @@ use crate::ops::Instruction;
 use crate::point_ops::PointOp;
 use crate::predicate::Predicate;
 use crate::signature::Signature;
+use crate::tx::{self, LogEntry, Tx, VerifiedTx};
 use crate::types::*;
-use crate::tx::{self,Tx,VerifiedTx,LogEntry};
 
 /// The ZkVM state used to validate a transaction.
 struct VM<'tx, 'transcript, 'gens> {
@@ -84,7 +84,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
 
         if vm.unique == false {
-            return Err(VMError::NotUniqueTxid);   
+            return Err(VMError::NotUniqueTxid);
         }
 
         // TBD: let txid = TxID::from_txlog(&self.txlog);
@@ -119,53 +119,65 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
 
         // Read the next instruction and advance the program state.
-        let (instr, instrsize) = Instruction::parse(&self.current_run.program[self.current_run.offset..])
-            .ok_or(VMError::FormatError)?;
+        let (instr, instrsize) =
+            Instruction::parse(&self.current_run.program[self.current_run.offset..])
+                .ok_or(VMError::FormatError)?;
 
         // Immediately update the offset for the next instructions
         self.current_run.offset += instrsize;
 
         match instr {
             Instruction::Push(len) => {
-                let range = self.current_run.offset-len .. self.current_run.offset;
-                self.stack.push(Item::Data(Data{
-                    bytes: &self.current_run.program[range]
+                let range = self.current_run.offset - len..self.current_run.offset;
+                self.stack.push(Item::Data(Data {
+                    bytes: &self.current_run.program[range],
                 }));
-            },
+            }
             Instruction::Drop => {
                 let _: CopyableItem = self.pop_item()?.to_copyable()?;
-            },
+            }
             Instruction::Dup(i) => {
                 if i >= self.stack.len() {
                     return Err(VMError::StackUnderflow);
                 }
                 let item_idx = self.stack.len() - i - 1;
                 let item = self.stack[item_idx].dup()?.clone();
-                self.stack.push(item.into());
-            },
+                self.push_item(item);
+            }
             Instruction::Roll(i) => {
                 if i >= self.stack.len() {
                     return Err(VMError::StackUnderflow);
                 }
                 let item = self.stack.remove(self.stack.len() - i - 1);
-                self.stack.push(item);
-            },
+                self.push_item(item);
+            }
+            Instruction::Nonce => {
+                let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
+                let contract = Contract {
+                    predicate,
+                    payload: Vec::new(),
+                };
+                self.txlog
+                    .push(tx::LogEntry::Nonce(predicate, self.maxtime));
+                self.push_item(contract);
+                self.unique = true;
+            }
             Instruction::Input => {
-                let serialized_input = self.pop_data()?;
+                let serialized_input = self.pop_item()?.to_data()?;
                 let (contract, _, utxo) = tx::parse_input(serialized_input.bytes)?;
-                self.stack.push(Item::Contract(contract));
+                self.push_item(contract);
                 self.txlog.push(tx::LogEntry::Input(utxo));
                 self.unique = true;
-            },
+            }
             Instruction::Ext(_) => {
                 if self.extension {
                     // if extensions are allowed by tx version,
                     // unknown opcodes are treated as no-ops.
                 } else {
-                    return Err(VMError::ExtensionsNotAllowed)
+                    return Err(VMError::ExtensionsNotAllowed);
                 }
             }
-            _ => unimplemented!()
+            _ => unimplemented!(),
         }
 
         return Ok(true);
@@ -175,8 +187,11 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
 
-    fn pop_data(&mut self) -> Result<Data<'tx>, VMError> {
-        self.pop_item()?.to_data()
+    fn push_item<I>(&mut self, item: I)
+    where
+        I: Into<Item<'tx>>,
+    {
+        self.stack.push(item.into())
     }
 }
 
@@ -194,4 +209,3 @@ enum VariableCommitment {
     /// so its commitment is no longer replaceable via `reblind`.
     Attached(CompressedRistretto, usize),
 }
-

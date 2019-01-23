@@ -3,9 +3,9 @@
 //! Operations:
 //! - disjunction: P = L + f(L,R)*B
 //! - program_commitment: P = h(prog)*B2
+use bulletproofs::PedersenGens;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
-use bulletproofs::PedersenGens;
 use merlin::Transcript;
 
 use crate::errors::VMError;
