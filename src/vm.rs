@@ -35,7 +35,7 @@ struct VM<'tx, 'transcript, 'gens> {
 
     current_run: Run<'tx>,
     run_stack: Vec<Run<'tx>>,
-    txlog: Vec<tx::LogEntry<'tx>>,
+    txlog: Vec<LogEntry<'tx>>,
     signtx_keys: Vec<CompressedRistretto>,
     deferred_operations: Vec<PointOp>,
     variables: Vec<VariableCommitment>,
@@ -157,8 +157,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                     predicate,
                     payload: Vec::new(),
                 };
-                self.txlog
-                    .push(tx::LogEntry::Nonce(predicate, self.maxtime));
+                self.txlog.push(LogEntry::Nonce(predicate, self.maxtime));
                 self.push_item(contract);
                 self.unique = true;
             }
@@ -166,7 +165,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                 let serialized_input = self.pop_item()?.to_data()?;
                 let (contract, _, utxo) = tx::parse_input(serialized_input.bytes)?;
                 self.push_item(contract);
-                self.txlog.push(tx::LogEntry::Input(utxo));
+                self.txlog.push(LogEntry::Input(utxo));
                 self.unique = true;
             }
             Instruction::Ext(_) => {
