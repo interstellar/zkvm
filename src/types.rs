@@ -101,6 +101,13 @@ impl<'tx> Item<'tx> {
         }
     }
 
+    pub fn to_variable(self) -> Result<Variable, VMError> {
+        match self {
+            Item::Variable(v) => Ok(v),
+            _ => Err(VMError::TypeNotVariable),
+        }
+    }
+
     pub fn to_value(self) -> Result<Value, VMError> {
         match self {
             Item::Value(v) => Ok(v),

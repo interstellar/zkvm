@@ -31,6 +31,18 @@ pub enum VMError {
     #[fail(display = "Item is not a contract.")]
     TypeNotContract,
 
+    /// This error occurs when an instruction requires a variable type.
+    #[fail(display = "Item is not a variable.")]
+    TypeNotVariable,
+
+    /// This error occurs when an instruction requires an expression type.
+    #[fail(display = "Item is not an expression.")]
+    TypeNotExpression,
+
+    /// This error occurs when an instruction requires a constraint type.
+    #[fail(display = "Item is not a constraint.")]
+    TypeNotConstraint,
+
     /// This error occurs when an instruction requires a value type.
     #[fail(display = "Item is not a value.")]
     TypeNotValue,

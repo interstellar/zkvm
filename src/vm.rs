@@ -127,47 +127,14 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         self.current_run.offset += instrsize;
 
         match instr {
-            Instruction::Push(len) => {
-                let range = self.current_run.offset - len..self.current_run.offset;
-                self.stack.push(Item::Data(Data {
-                    bytes: &self.current_run.program[range],
-                }));
-            }
-            Instruction::Drop => {
-                let _: CopyableItem = self.pop_item()?.to_copyable()?;
-            }
-            Instruction::Dup(i) => {
-                if i >= self.stack.len() {
-                    return Err(VMError::StackUnderflow);
-                }
-                let item_idx = self.stack.len() - i - 1;
-                let item = self.stack[item_idx].dup()?.clone();
-                self.push_item(item);
-            }
-            Instruction::Roll(i) => {
-                if i >= self.stack.len() {
-                    return Err(VMError::StackUnderflow);
-                }
-                let item = self.stack.remove(self.stack.len() - i - 1);
-                self.push_item(item);
-            }
-            Instruction::Nonce => {
-                let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
-                let contract = Contract {
-                    predicate,
-                    payload: Vec::new(),
-                };
-                self.txlog.push(LogEntry::Nonce(predicate, self.maxtime));
-                self.push_item(contract);
-                self.unique = true;
-            }
-            Instruction::Input => {
-                let serialized_input = self.pop_item()?.to_data()?;
-                let (contract, _, utxo) = tx::parse_input(serialized_input.bytes)?;
-                self.push_item(contract);
-                self.txlog.push(LogEntry::Input(utxo));
-                self.unique = true;
-            }
+            Instruction::Push(len) => self.pushdata(len)?,
+            Instruction::Drop => self.drop()?,
+            Instruction::Dup(i) => self.dup(i)?,
+            Instruction::Roll(i) => self.roll(i)?,
+            Instruction::Nonce => self.nonce()?,
+            Instruction::Issue => self.issue()?,
+            Instruction::Input => self.input()?,
+            Instruction::Output(k) => self.output(k)?,
             Instruction::Ext(_) => {
                 if self.extension {
                     // if extensions are allowed by tx version,
@@ -180,6 +147,106 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
 
         return Ok(true);
+    }
+
+    fn pushdata(&mut self, len: usize) -> Result<(), VMError> {
+        let range = self.current_run.offset - len..self.current_run.offset;
+        self.stack.push(Item::Data(Data {
+            bytes: &self.current_run.program[range],
+        }));
+        Ok(())
+    }
+
+    fn drop(&mut self) -> Result<(), VMError> {
+        let _: CopyableItem = self.pop_item()?.to_copyable()?;
+        Ok(())
+    }
+
+    fn dup(&mut self, i: usize) -> Result<(), VMError> {
+        if i >= self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+        let item_idx = self.stack.len() - i - 1;
+        let item = self.stack[item_idx].dup()?.clone();
+        self.push_item(item);
+        Ok(())
+    }
+
+    fn roll(&mut self, i: usize) -> Result<(), VMError> {
+        if i >= self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+        let item = self.stack.remove(self.stack.len() - i - 1);
+        self.push_item(item);
+        Ok(())
+    }
+
+    fn nonce(&mut self) -> Result<(), VMError> {
+        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
+        let contract = Contract {
+            predicate,
+            payload: Vec::new(),
+        };
+        self.txlog.push(LogEntry::Nonce(predicate, self.maxtime));
+        self.push_item(contract);
+        self.unique = true;
+        Ok(())
+    }
+
+    fn issue(&mut self) -> Result<(), VMError> {
+        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
+        let flv = self.pop_item()?.to_variable()?;
+        let qty = self.pop_item()?.to_variable()?;
+
+        // TBD:
+        // 1. Pops [point](#point) `pred`.
+        // 2. Pops [variable](#variable-type) `flv`; if the variable is detached, attaches it.
+        // 3. Pops [variable](#variable-type) `qty`; if the variable is detached, attaches it.
+        // 4. Creates a [value](#value-type) with variables `qty` and `flv` for quantity and flavor, respectively.
+        // 5. Computes the _flavor_ scalar defined by the [predicate](#predicate) `pred` using the following [transcript-based](#transcript) protocol:
+        //     ```
+        //     T = Transcript("ZkVM.issue")
+        //     T.commit("predicate", pred)
+        //     flavor = T.challenge_scalar("flavor")
+        //     ```
+        // 6. Checks that the `flv` has unblinded commitment to `flavor` by [deferring the point operation](#deferred-point-operations):
+        //     ```
+        //     flv == flavor·B
+        //     ```
+        // 7. Adds a 64-bit range proof for the `qty` to the [constraint system](#constraint-system) (see [Cloak protocol](https://github.com/interstellar/spacesuit/blob/master/spec.md) for the range proof definition).
+        // 8. Adds an [issue entry](#issue-entry) to the [transaction log](#transaction-log).
+        // 9. Creates a [contract](#contract-type) with the value as the only [payload](#contract-payload), protected by the predicate `pred`.
+
+        // The value is now issued into the contract that must be unlocked
+        // using one of the contract instructions: [`signtx`](#signx), [`delegate`](#delegate) or [`call`](#call).
+
+        // Fails if:
+        // * `pred` is not a valid [point](#point),
+        // * `flv` or `qty` are not [variable types](#variable-type).
+
+        // let contract = Contract {
+        //     predicate,
+        //     payload: Vec::new(),
+        // };
+        // self.txlog.push(LogEntry::Issue(qty commitment, flv commitment));
+        // self.push_item(contract);
+        // self.unique = true;
+        unimplemented!();
+        Ok(())
+    }
+
+    fn input(&mut self) -> Result<(), VMError> {
+        let serialized_input = self.pop_item()?.to_data()?;
+        let (contract, _, utxo) = tx::parse_input(serialized_input.bytes)?;
+        self.push_item(contract);
+        self.txlog.push(LogEntry::Input(utxo));
+        self.unique = true;
+        Ok(())
+    }
+
+    fn output(&mut self, k: usize) -> Result<(), VMError> {
+        // TBD:
+        unimplemented!()
     }
 
     fn pop_item(&mut self) -> Result<Item<'tx>, VMError> {
