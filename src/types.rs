@@ -17,14 +17,6 @@ pub enum Item<'tx> {
     Constraint(Constraint),
 }
 
-#[derive(Clone, Debug)]
-pub enum CopyableItem<'tx> {
-    Data(Data<'tx>),
-    Variable(Variable),
-    Expression(Expression),
-    Constraint(Constraint),
-}
-
 #[derive(Debug)]
 pub enum PortableItem<'tx> {
     Data(Data<'tx>),
@@ -76,24 +68,7 @@ pub struct Constraint {
 }
 
 impl<'tx> Item<'tx> {
-    /// Downcasts an item to a CopyableItem if possible.
-    pub fn to_copyable(self) -> Result<CopyableItem<'tx>, VMError> {
-        match self {
-            Item::Data(x) => Ok(CopyableItem::Data(x)),
-            // TBD: variable, expression, constraint are also copyable
-            _ => Err(VMError::TypeNotCopyable),
-        }
-    }
-
-    /// Copies an item if it's copyable.
-    pub fn dup(&self) -> Result<CopyableItem<'tx>, VMError> {
-        match self {
-            Item::Data(x) => Ok(CopyableItem::Data(*x)),
-            // TBD: variable, expression, constraint are also copyable
-            _ => Err(VMError::TypeNotCopyable),
-        }
-    }
-
+    // Downcasts to Data type
     pub fn to_data(self) -> Result<Data<'tx>, VMError> {
         match self {
             Item::Data(x) => Ok(x),
@@ -101,6 +76,7 @@ impl<'tx> Item<'tx> {
         }
     }
 
+    // Downcasts to Variable type
     pub fn to_variable(self) -> Result<Variable, VMError> {
         match self {
             Item::Variable(v) => Ok(v),
@@ -108,6 +84,7 @@ impl<'tx> Item<'tx> {
         }
     }
 
+    // Downcasts to Value type
     pub fn to_value(self) -> Result<Value, VMError> {
         match self {
             Item::Value(v) => Ok(v),
@@ -115,6 +92,7 @@ impl<'tx> Item<'tx> {
         }
     }
 
+    // Downcasts to WideValue type (Value is casted to WideValue)
     pub fn to_wide_value(self) -> Result<WideValue, VMError> {
         match self {
             Item::Value(v) => Ok(v.into()),
@@ -172,18 +150,6 @@ impl<'tx> From<WideValue> for Item<'tx> {
 impl<'tx> From<Contract<'tx>> for Item<'tx> {
     fn from(x: Contract<'tx>) -> Self {
         Item::Contract(x)
-    }
-}
-
-// Upcast a copyable item to any item
-impl<'tx> From<CopyableItem<'tx>> for Item<'tx> {
-    fn from(copyable: CopyableItem<'tx>) -> Self {
-        match copyable {
-            CopyableItem::Data(x) => Item::Data(x),
-            CopyableItem::Variable(x) => Item::Variable(x),
-            CopyableItem::Expression(x) => Item::Expression(x),
-            CopyableItem::Constraint(x) => Item::Constraint(x),
-        }
     }
 }
 

@@ -14,7 +14,7 @@ use crate::tx::{self, LogEntry, Tx, VerifiedTx};
 use crate::types::*;
 
 /// The ZkVM state used to validate a transaction.
-struct VM<'tx, 'transcript, 'gens> {
+pub struct VM<'tx, 'transcript, 'gens> {
     version: u64,
     mintime: u64,
     maxtime: u64,
@@ -152,7 +152,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             Instruction::Retire => unimplemented!(),
             Instruction::Qty => unimplemented!(),
             Instruction::Flavor => unimplemented!(),
-            Instruction::Cloak(m,n) => self.cloak(m,n)?,
+            Instruction::Cloak(m, n) => self.cloak(m, n)?,
             Instruction::Import => unimplemented!(),
             Instruction::Export => unimplemented!(),
             Instruction::Input => self.input()?,
@@ -180,8 +180,13 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     }
 
     fn drop(&mut self) -> Result<(), VMError> {
-        let _: CopyableItem = self.pop_item()?.to_copyable()?;
-        Ok(())
+        match self.pop_item()? {
+            Item::Data(_) => Ok(()),
+            Item::Variable(_) => Ok(()),
+            Item::Expression(_) => Ok(()),
+            Item::Constraint(_) => Ok(()),
+            _ => Err(VMError::TypeNotCopyable),
+        }
     }
 
     fn dup(&mut self, i: usize) -> Result<(), VMError> {
@@ -189,7 +194,13 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             return Err(VMError::StackUnderflow);
         }
         let item_idx = self.stack.len() - i - 1;
-        let item = self.stack[item_idx].dup()?.clone();
+        let item = match &self.stack[item_idx] {
+            Item::Data(x) => Item::Data(*x),
+            Item::Variable(x) => Item::Variable(x.clone()),
+            Item::Expression(x) => Item::Expression(x.clone()),
+            Item::Constraint(x) => Item::Constraint(x.clone()),
+            _ => return Err(VMError::TypeNotCopyable),
+        };
         self.push_item(item);
         Ok(())
     }
