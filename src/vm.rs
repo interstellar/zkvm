@@ -163,10 +163,15 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
 
         // TBD: let txid = TxID::from_txlog(&self.txlog);
+        // TBD: schnorr sig over txid preparation
+        // TBD: deferred ops verification
+        // TBD: r1cs proof verification
 
-        // TODO: check signatures and proofs
+        let txid = unimplemented!();
 
-        unimplemented!()
+        Ok(VerifiedTx{
+            txid
+        })
     }
 
     /// Runs through the entire program and nested programs until completion.
