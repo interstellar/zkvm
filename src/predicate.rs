@@ -3,14 +3,14 @@
 //! Operations:
 //! - disjunction: P = L + f(L,R)*B
 //! - program_commitment: P = h(prog)*B2
+use curve25519_dalek::ristretto::CompressedRistretto;
+use curve25519_dalek::scalar::Scalar;
+use bulletproofs::PedersenGens;
+use merlin::Transcript;
 
 use crate::errors::VMError;
 use crate::point_ops::PointOp;
 use crate::transcript::TranscriptProtocol;
-use bulletproofs::PedersenGens;
-use curve25519_dalek::ristretto::CompressedRistretto;
-use curve25519_dalek::scalar::Scalar;
-use merlin::Transcript;
 
 /// Predicate is represented by a compressed Ristretto point.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

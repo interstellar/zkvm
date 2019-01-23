@@ -117,6 +117,7 @@ impl Instruction {
         let byte = program[0];
         let immdata = &program[1..];
 
+        // Interpret the opcode. Unknown opcodes are extension opcodes.
         let opcode = match Opcode::from_u8(byte) {
             None => {
                 return Some((Instruction::Ext(byte), 1));

@@ -16,4 +16,7 @@ mod point_ops;
 mod predicate;
 mod signature;
 mod transcript;
+mod encoding;
+mod types;
+mod tx;
 mod vm;

@@ -10,36 +10,8 @@ use crate::ops::Instruction;
 use crate::point_ops::PointOp;
 use crate::predicate::Predicate;
 use crate::signature::Signature;
-
-pub const CURRENT_TX_VERSION: u64 = 1;
-
-/// Instance of a transaction that contains all necessary data to validate it.
-pub struct Tx {
-    /// Version of the transaction
-    pub version: u64,
-
-    /// Timestamp before which tx is invalid (sec)
-    pub mintime: u64,
-
-    /// Timestamp after which tx is invalid (sec)
-    pub maxtime: u64,
-
-    /// Program representing the transaction
-    pub program: Vec<u8>,
-
-    /// Aggregated signature of the txid
-    pub signature: Signature,
-
-    /// Constraint system proof for all the constraints
-    pub proof: R1CSProof,
-}
-
-/// Represents a verified transaction: a txid and a list of state updates.
-pub struct VerifiedTx {
-    /// Transaction ID
-    pub txid: [u8; 32],
-    // TBD: list of txlog inputs, outputs and nonces to be inserted/deleted in the blockchain state.
-}
+use crate::types::*;
+use crate::tx::{self,Tx,VerifiedTx,LogEntry};
 
 /// The ZkVM state used to validate a transaction.
 struct VM<'tx, 'transcript, 'gens> {
@@ -50,13 +22,20 @@ struct VM<'tx, 'transcript, 'gens> {
     tx_signature: Signature,
     cs_proof: R1CSProof,
 
+    // is true when tx version is in the future and
+    // we allow treating unassigned opcodes as no-ops.
     extension: bool,
+
+    // set to true by `input` and `nonce` instructions
+    // when the txid is guaranteed to be unique.
     unique: bool,
+
+    // stack of all items in the VM
     stack: Vec<Item<'tx>>,
 
     current_run: Run<'tx>,
     run_stack: Vec<Run<'tx>>,
-    txlog: Vec<[u8; 32]>,
+    txlog: Vec<tx::LogEntry<'tx>>,
     signtx_keys: Vec<CompressedRistretto>,
     deferred_operations: Vec<PointOp>,
     variables: Vec<VariableCommitment>,
@@ -67,7 +46,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     /// Creates a new instance of ZkVM with the appropriate parameters
     pub fn verify(tx: &Tx, bp_gens: &BulletproofGens) -> Result<VerifiedTx, VMError> {
         // Allow extension opcodes if tx version is above the currently supported one.
-        let extension = tx.version > CURRENT_TX_VERSION;
+        let extension = tx.version > tx::CURRENT_VERSION;
 
         // Construct a CS verifier to be used during ZkVM execution.
         let mut r1cs_transcript = Transcript::new(b"ZkVM.r1cs"); // XXX: spec does not specify this
@@ -100,6 +79,16 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
         vm.run()?;
 
+        if vm.stack.len() > 0 {
+            return Err(VMError::StackNotClean);
+        }
+
+        if vm.unique == false {
+            return Err(VMError::NotUniqueTxid);   
+        }
+
+        // TBD: let txid = TxID::from_txlog(&self.txlog);
+
         // TODO: check signatures and proofs
 
         unimplemented!()
@@ -131,7 +120,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
         // Read the next instruction and advance the program state.
         let (instr, instrsize) = Instruction::parse(&self.current_run.program[self.current_run.offset..])
-            .ok_or(VMError::MalformedInstruction)?;
+            .ok_or(VMError::FormatError)?;
 
         // Immediately update the offset for the next instructions
         self.current_run.offset += instrsize;
@@ -144,14 +133,15 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                 }));
             },
             Instruction::Drop => {
-                self.stack.pop().ok_or(VMError::StackUnderflow)?.to_copyable()?
+                let _: CopyableItem = self.pop_item()?.to_copyable()?;
             },
             Instruction::Dup(i) => {
                 if i >= self.stack.len() {
                     return Err(VMError::StackUnderflow);
                 }
-                let item = self.stack[self.stack.len() - i - 1].copy()?;
-                self.stack.push(item);
+                let item_idx = self.stack.len() - i - 1;
+                let item = self.stack[item_idx].dup()?.clone();
+                self.stack.push(item.into());
             },
             Instruction::Roll(i) => {
                 if i >= self.stack.len() {
@@ -161,8 +151,19 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                 self.stack.push(item);
             },
             Instruction::Input => {
-                // TBD: pop parse input structure
-                self.stack.pop().ok_or()
+                let serialized_input = self.pop_data()?;
+                let (contract, _, utxo) = tx::parse_input(serialized_input.bytes)?;
+                self.stack.push(Item::Contract(contract));
+                self.txlog.push(tx::LogEntry::Input(utxo));
+                self.unique = true;
+            },
+            Instruction::Ext(_) => {
+                if self.extension {
+                    // if extensions are allowed by tx version,
+                    // unknown opcodes are treated as no-ops.
+                } else {
+                    return Err(VMError::ExtensionsNotAllowed)
+                }
             }
             _ => unimplemented!()
         }
@@ -170,55 +171,13 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         return Ok(true);
     }
 
-    
-}
-
-enum Item<'tx> {
-    Data(Data<'tx>),
-    Contract(Contract<'tx>),
-    Value(Value<'tx>),
-    WideValue(WideValue<'tx>),
-}
-
-impl<'tx> Item<'tx> {
-    fn to_copyable(self) -> Result<Item<'tx>, VMError> {
-        match self {
-            Item::Data(x) => Ok(Item::Data(x)),
-            // TBD: variable, expression, constraint are also copyable
-            _ => Err(VMError::TypeNotCopyable)
-        }
+    fn pop_item(&mut self) -> Result<Item<'tx>, VMError> {
+        self.stack.pop().ok_or(VMError::StackUnderflow)
     }
 
-    fn to_data(self) -> Result<Data<'tx>, VMError> {
-        match self {
-            Item::Data(x) => Ok(x),
-            _ => Err(VMError::TypeNotData)
-        }
+    fn pop_data(&mut self) -> Result<Data<'tx>, VMError> {
+        self.pop_item()?.to_data()
     }
-
-    fn copy(&self) -> Result<Item<'tx>, VMError> {
-        match self {
-            Item::Data(x) => Ok(Item::Data(x)),
-            // TBD: variable, expression, constraint are also copyable
-            _ => Err(VMError::TypeNotCopyable)
-        }
-    }
-}
-
-#[derive(Copy,Clone)]
-struct Data<'tx> {
-    bytes: &'tx [u8],
-}
-
-struct Contract<'tx> {
-    payload: Vec<Item<'tx>>,
-    predicate: Predicate,
-}
-
-struct Value<'tx> {
-}
-
-struct WideValue<'tx> {
 }
 
 struct Run<'tx> {
@@ -235,3 +194,4 @@ enum VariableCommitment {
     /// so its commitment is no longer replaceable via `reblind`.
     Attached(CompressedRistretto, usize),
 }
+
