@@ -159,7 +159,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         // Verify the R1CS proof
         vm.cs
             .verify(&tx.proof)
-            .map_err(|_| VMError::R1CSProofInvalid)?;
+            .map_err(|_| VMError::InvalidR1CSProof)?;
 
         Ok(VerifiedTx {
             version: tx.version,

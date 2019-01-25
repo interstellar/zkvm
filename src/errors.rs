@@ -73,5 +73,5 @@ pub enum VMError {
 
     /// This error occurs when R1CS proof verification failed.
     #[fail(display = "R1CS proof is invalid")]
-    R1CSProofInvalid,
+    InvalidR1CSProof,
 }
