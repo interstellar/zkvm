@@ -5,6 +5,7 @@ use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 use spacesuit;
+use std::iter::FromIterator;
 
 use crate::encoding;
 use crate::errors::VMError;
@@ -661,9 +662,15 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         output
     }
 
-    fn add_range_proof(&mut self, bitrange: usize, expr: Expression) {
-        // TBD: add a range proof condition on the given expression
-        unimplemented!()
+    fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
+        spacesuit::range_proof(
+            &mut self.cs,
+            r1cs::LinearCombination::from_iter(expr.terms),
+            // TBD: maintain the assignment for the expression and provide it here
+            None,
+            bitrange,
+        )
+        .map_err(|_| VMError::R1CSInconsistency)
     }
 }
 
