@@ -419,6 +419,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let mut cloak_ins: Vec<spacesuit::AllocatedValue> = Vec::with_capacity(m);
         let mut cloak_outs: Vec<spacesuit::AllocatedValue> = Vec::with_capacity(2 * n);
 
+        // Make cloak outputs and output values using (qty,flv) commitments
         for _ in 0..n {
             let flv = self.pop_item()?.to_data()?.to_point()?;
             let qty = self.pop_item()?.to_data()?.to_point()?;
@@ -434,6 +435,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             cloak_outs.insert(0, cloak_value);
         }
 
+        // Make cloak inputs out of wide values
         for _ in 0..m {
             let item = self.pop_item()?;
             let walue = self.item_to_wide_value(item)?;
