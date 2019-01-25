@@ -13,6 +13,7 @@ use crate::point_ops::PointOp;
 use crate::predicate::Predicate;
 use crate::signature::Signature;
 use crate::transcript::TranscriptProtocol;
+use crate::txlog::{Entry, TxID, UTXO};
 use crate::types::*;
 
 /// Current tx version determines which extension opcodes are treated as noops (see VM.extension flag).
@@ -47,28 +48,21 @@ pub struct Tx {
 
 /// Represents a verified transaction: a txid and a list of state updates.
 pub struct VerifiedTx {
+    /// Version of the transaction
+    pub version: u64,
+
+    /// Timestamp before which tx is invalid (sec)
+    pub mintime: u64,
+
+    /// Timestamp after which tx is invalid (sec)
+    pub maxtime: u64,
+
     /// Transaction ID
-    pub txid: [u8; 32],
-    // TBD: list of txlog inputs, outputs and nonces to be inserted/deleted in the blockchain state.
+    pub id: TxID,
+
+    // List of inputs, outputs and nonces to be inserted/deleted in the blockchain state.
+    pub log: Vec<Entry>,
 }
-
-/// Entry in a transaction log
-pub enum LogEntry<'tx> {
-    Issue(CompressedRistretto, CompressedRistretto),
-    Retire(CompressedRistretto, CompressedRistretto),
-    Input(UTXO),
-    Nonce(Predicate, u64),
-    Output(Vec<u8>),
-    Data(Data<'tx>),
-    Import, // TBD: parameters
-    Export, // TBD: parameters
-}
-
-/// Transaction ID is a unique 32-byte identifier of a transaction
-pub struct TxID([u8; 32]);
-
-/// UTXO is a unique 32-byte identifier of a transaction output
-pub struct UTXO([u8; 32]);
 
 /// The ZkVM state used to validate a transaction.
 pub struct VM<'tx, 'transcript, 'gens> {
@@ -92,7 +86,7 @@ pub struct VM<'tx, 'transcript, 'gens> {
 
     current_run: Run<'tx>,
     run_stack: Vec<Run<'tx>>,
-    txlog: Vec<LogEntry<'tx>>,
+    txlog: Vec<Entry>,
     signtx_keys: Vec<CompressedRistretto>,
     deferred_operations: Vec<PointOp>,
     variable_commitments: Vec<VariableCommitment>,
@@ -146,7 +140,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                 offset: 0,
             },
             run_stack: Vec::new(),
-            txlog: Vec::new(),
+            txlog: vec![Entry::Header(tx.version, tx.mintime, tx.maxtime)],
             signtx_keys: Vec::new(),
             deferred_operations: Vec::new(),
             variable_commitments: Vec::new(),
@@ -163,14 +157,19 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             return Err(VMError::NotUniqueTxid);
         }
 
-        // TBD: let txid = TxID::from_txlog(&self.txlog);
+        let txid = TxID::from_log(&vm.txlog[..]);
+
         // TBD: schnorr sig over txid preparation
         // TBD: deferred ops verification
         // TBD: r1cs proof verification
 
-        let txid = unimplemented!();
-
-        Ok(VerifiedTx { txid })
+        Ok(VerifiedTx {
+            version: tx.version,
+            mintime: tx.mintime,
+            maxtime: tx.maxtime,
+            id: txid,
+            log: vm.txlog,
+        })
     }
 
     /// Runs through the entire program and nested programs until completion.
@@ -306,7 +305,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             predicate,
             payload: Vec::new(),
         };
-        self.txlog.push(LogEntry::Nonce(predicate, self.maxtime));
+        self.txlog.push(Entry::Nonce(predicate, self.maxtime));
         self.push_item(contract);
         self.unique = true;
         Ok(())
@@ -333,7 +332,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let qty_expr = self.variable_to_expression(qty);
         self.add_range_proof(64, qty_expr);
 
-        self.txlog.push(LogEntry::Issue(qty_point, flv_point));
+        self.txlog.push(Entry::Issue(qty_point, flv_point));
 
         let contract = Contract {
             predicate,
@@ -348,7 +347,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let value = self.pop_item()?.to_value()?;
         let qty = self.get_variable_commitment(value.qty);
         let flv = self.get_variable_commitment(value.flv);
-        self.txlog.push(LogEntry::Retire(qty, flv));
+        self.txlog.push(Entry::Retire(qty, flv));
         Ok(())
     }
 
@@ -357,7 +356,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let serialized_input = self.pop_item()?.to_data()?;
         let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
         self.push_item(contract);
-        self.txlog.push(LogEntry::Input(utxo));
+        self.txlog.push(Entry::Input(utxo));
         self.unique = true;
         Ok(())
     }
@@ -379,7 +378,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let output = self.encode_output(Contract { predicate, payload });
-        self.txlog.push(LogEntry::Output(output));
+        self.txlog.push(Entry::Output(output));
         Ok(())
     }
 
@@ -671,17 +670,5 @@ impl<'tx> Contract<'tx> {
             }
         }
         size
-    }
-}
-
-impl UTXO {
-    /// Computes UTXO identifier from an output and transaction id.
-    pub fn from_output(output: &[u8], txid: &TxID) -> Self {
-        let mut t = Transcript::new(b"ZkVM.utxo");
-        t.commit_bytes(b"txid", &txid.0);
-        t.commit_bytes(b"output", &output);
-        let mut utxo = UTXO([0u8; 32]);
-        t.challenge_bytes(b"id", &mut utxo.0);
-        utxo
     }
 }
