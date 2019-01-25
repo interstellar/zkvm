@@ -4,6 +4,7 @@ use bulletproofs::{BulletproofGens, PedersenGens};
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
+use spacesuit;
 
 use crate::encoding;
 use crate::errors::VMError;
@@ -169,9 +170,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
         let txid = unimplemented!();
 
-        Ok(VerifiedTx{
-            txid
-        })
+        Ok(VerifiedTx { txid })
     }
 
     /// Runs through the entire program and nested programs until completion.
@@ -401,8 +400,58 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     }
 
     fn cloak(&mut self, m: usize, n: usize) -> Result<(), VMError> {
-        // TBD:...
-        unimplemented!()
+        // _widevalues commitments_ **cloak:_m_:_n_** → _values_
+        // Merges and splits `m` [wide values](#wide-value-type) into `n` [values](#values).
+
+        if m > self.stack.len() || n > self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+        // Now that individual m and n are bounded by the (not even close to overflow) stack size,
+        // we can add them together.
+        // This does not overflow if the stack size is below 2^30 items.
+        assert!(self.stack.len() < (1usize << 30));
+        if (m + 2 * n) > self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+
+        let mut output_values: Vec<Value> = Vec::with_capacity(2 * n);
+
+        let mut cloak_ins: Vec<spacesuit::AllocatedValue> = Vec::with_capacity(m);
+        let mut cloak_outs: Vec<spacesuit::AllocatedValue> = Vec::with_capacity(2 * n);
+
+        for _ in 0..n {
+            let flv = self.pop_item()?.to_data()?.to_point()?;
+            let qty = self.pop_item()?.to_data()?.to_point()?;
+
+            let qty = self.make_variable(qty);
+            let flv = self.make_variable(flv);
+
+            let value = Value { qty, flv };
+            let cloak_value = self.value_to_cloak_value(&value);
+
+            // insert in the same order as they are on stack (the deepest item will be at index 0)
+            output_values.insert(0, value);
+            cloak_outs.insert(0, cloak_value);
+        }
+
+        for _ in 0..m {
+            let item = self.pop_item()?;
+            let walue = self.item_to_wide_value(item)?;
+
+            let cloak_value = self.wide_value_to_cloak_value(&walue);
+
+            // insert in the same order as they are on stack (the deepest item will be at index 0)
+            cloak_ins.insert(0, cloak_value);
+        }
+
+        spacesuit::cloak(&mut self.cs, cloak_ins, cloak_outs).map_err(|_| VMError::FormatError)?;
+
+        // Push in the same order.
+        for v in output_values.into_iter() {
+            self.push_item(v);
+        }
+
+        Ok(())
     }
 
     // _contract_ **signtx** → _results..._
@@ -467,10 +516,29 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
     }
 
+    fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
+        spacesuit::AllocatedValue {
+            q: self.attach_variable(value.qty).1,
+            f: self.attach_variable(value.flv).1,
+            // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
+            assignment: None,
+        }
+    }
+
+    fn wide_value_to_cloak_value(&mut self, walue: &WideValue) -> spacesuit::AllocatedValue {
+        spacesuit::AllocatedValue {
+            q: walue.r1cs_qty,
+            f: walue.r1cs_flv,
+            // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
+            assignment: None,
+        }
+    }
+
     fn item_to_wide_value(&mut self, item: Item<'tx>) -> Result<WideValue, VMError> {
         match item {
-            Item::Value(v) => Ok(WideValue{
-                // TBD
+            Item::Value(value) => Ok(WideValue {
+                r1cs_qty: self.attach_variable(value.qty).1,
+                r1cs_flv: self.attach_variable(value.flv).1,
             }),
             Item::WideValue(w) => Ok(w),
             _ => Err(VMError::TypeNotWideValue),

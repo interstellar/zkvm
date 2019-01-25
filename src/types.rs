@@ -45,7 +45,8 @@ pub struct Value {
 
 #[derive(Debug)]
 pub struct WideValue {
-    // TBD
+    pub(crate) r1cs_qty: r1cs::Variable,
+    pub(crate) r1cs_flv: r1cs::Variable,
 }
 
 #[derive(Copy, Clone, Debug)]

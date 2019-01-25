@@ -27,8 +27,7 @@ features = ["yoloproofs"]
 
 [dependencies.spacesuit]
 git = "https://github.com/interstellar/spacesuit"
-branch = "master"
-# TBD: use curve 1.0.1 inside spacesuit
+branch = "main"
 
 [dev-dependencies]
 criterion = "0.2"
