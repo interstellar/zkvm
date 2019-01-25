@@ -66,4 +66,12 @@ pub enum VMError {
     /// This error occurs when VM's uniqueness flag remains false.
     #[fail(display = "Tx ID is not made unique via `input` or `nonce`")]
     NotUniqueTxid,
+
+    /// This error occurs when VM's deferred schnorr checks fail
+    #[fail(display = "Deferred point operations failed")]
+    PointOperationsFailed,
+
+    /// This error occurs when R1CS proof verification failed.
+    #[fail(display = "R1CS proof is invalid")]
+    R1CSProofInvalid,
 }

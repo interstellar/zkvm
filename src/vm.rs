@@ -66,12 +66,9 @@ pub struct VerifiedTx {
 
 /// The ZkVM state used to validate a transaction.
 pub struct VM<'tx, 'transcript, 'gens> {
-    version: u64,
     mintime: u64,
     maxtime: u64,
     program: &'tx [u8],
-    tx_signature: Signature,
-    cs_proof: R1CSProof,
 
     // is true when tx version is in the future and
     // we allow treating unassigned opcodes as no-ops.
@@ -124,12 +121,9 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let cs = r1cs::Verifier::new(&bp_gens, &pc_gens, &mut r1cs_transcript);
 
         let mut vm = VM {
-            version: tx.version,
             mintime: tx.mintime,
             maxtime: tx.maxtime,
             program: &tx.program,
-            tx_signature: tx.signature,
-            cs_proof: tx.proof.clone(),
 
             extension,
             unique: false,
@@ -149,19 +143,23 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
         vm.run()?;
 
-        if vm.stack.len() > 0 {
-            return Err(VMError::StackNotClean);
-        }
-
-        if vm.unique == false {
-            return Err(VMError::NotUniqueTxid);
-        }
-
         let txid = TxID::from_log(&vm.txlog[..]);
 
-        // TBD: schnorr sig over txid preparation
-        // TBD: deferred ops verification
-        // TBD: r1cs proof verification
+        // Verify the signatures over txid
+        let mut signtx_transcript = Transcript::new(b"ZkVM.signtx");
+        signtx_transcript.commit_bytes(b"txid", &txid.0);
+        let signtx_point_op = tx
+            .signature
+            .verify_aggregated(&mut signtx_transcript, &vm.signtx_keys[..]);
+        vm.deferred_operations.push(signtx_point_op);
+
+        // Verify all deferred crypto operations.
+        PointOp::verify_batch(&vm.deferred_operations[..])?;
+
+        // Verify the R1CS proof
+        vm.cs
+            .verify(&tx.proof)
+            .map_err(|_| VMError::R1CSProofInvalid)?;
 
         Ok(VerifiedTx {
             version: tx.version,
@@ -179,6 +177,15 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                 break;
             }
         }
+
+        if self.stack.len() > 0 {
+            return Err(VMError::StackNotClean);
+        }
+
+        if self.unique == false {
+            return Err(VMError::NotUniqueTxid);
+        }
+
         Ok(())
     }
 
