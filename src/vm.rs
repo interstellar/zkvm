@@ -338,7 +338,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         });
 
         let qty_expr = self.variable_to_expression(qty);
-        self.add_range_proof(64, qty_expr);
+        self.add_range_proof(64, qty_expr)?;
 
         self.txlog.push(Entry::Issue(qty_point, flv_point));
 
