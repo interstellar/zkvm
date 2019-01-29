@@ -117,7 +117,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         let extension = tx.version > CURRENT_VERSION;
 
         // Construct a CS verifier to be used during ZkVM execution.
-        let mut r1cs_transcript = Transcript::new(b"ZkVM.r1cs"); // XXX: spec does not specify this
+        let mut r1cs_transcript = Transcript::new(b"ZkVM.r1cs");
         let pc_gens = PedersenGens::default();
         let cs = r1cs::Verifier::new(&bp_gens, &pc_gens, &mut r1cs_transcript);
 
@@ -371,9 +371,6 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
     /// _items... predicate_ **output:_k_** → ø
     fn output(&mut self, k: usize) -> Result<(), VMError> {
-        // !!! !!! !!!
-        // TBD: SPEC: do not force-attach the value variables to not pollute r1cs!
-        // !!! !!! !!!
         let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
 
         if k > self.stack.len() {
@@ -571,10 +568,6 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
     /// Parses the input and returns the instantiated contract, txid and UTXO identifier.
     fn decode_input(&mut self, input: &'tx [u8]) -> Result<(Contract<'tx>, TxID, UTXO), VMError> {
-        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
-        // TBD: SPEC: change the spec - we are moving txid in the front
-        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
-
         //        Input  =  PreviousTxID || PreviousOutput
         // PreviousTxID  =  <32 bytes>
 
@@ -587,10 +580,6 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
 
     /// Parses the output and returns an instantiated contract.
     fn decode_output(&mut self, output: &'tx [u8]) -> Result<(Contract<'tx>), VMError> {
-        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
-        // TBD: SPEC: change the spec - we are moving predicate up front
-        // !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!! !!!
-
         //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
         // Predicate  =  <32 bytes>
         //      Item  =  enum { Data, Value }
@@ -622,7 +611,6 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
                     let (qty, rest) = encoding::read_point(rest)?;
                     let (flv, rest) = encoding::read_point(rest)?;
 
-                    // TBD: SPEC: specify the order of creating these variables
                     let qty = self.make_variable(qty);
                     let flv = self.make_variable(flv);
 
