@@ -38,10 +38,13 @@ impl Signature {
             transcript.commit_point(b"P", p);
         }
 
-        let mut pairs = pubkeys.iter().map(|p| {
-            let x = transcript.challenge_scalar(b"x");
-            (x, *p)
-        }).collect::<Vec<_>>();
+        let mut pairs = pubkeys
+            .iter()
+            .map(|p| {
+                let x = transcript.challenge_scalar(b"x");
+                (x, *p)
+            })
+            .collect::<Vec<_>>();
 
         // Commit the signature's nonce commitment
         transcript.commit_point(b"R", &self.R);
@@ -74,9 +77,12 @@ impl Signature {
 
     /// Creates an aggregated signature for a set of private keys
     pub fn sign_aggregated(transcript: &mut Transcript, privkeys: &[Scalar]) -> Self {
-        // Derive public keys from privkeys 
+        // Derive public keys from privkeys
         let gens = PedersenGens::default();
-        let pubkeys = privkeys.iter().map(|p| (p * gens.B).compress()).collect::<Vec<_>>();
+        let pubkeys = privkeys
+            .iter()
+            .map(|p| (p * gens.B).compress())
+            .collect::<Vec<_>>();
 
         // Commit pubkeys
         let n = pubkeys.len();
@@ -86,10 +92,13 @@ impl Signature {
         }
 
         // Generate aggregated private key
-        let aggregated_privkey: Scalar = privkeys.iter().map(|p| {
-            let x = transcript.challenge_scalar(b"x");
-            p * x
-        }).sum();
+        let aggregated_privkey: Scalar = privkeys
+            .iter()
+            .map(|p| {
+                let x = transcript.challenge_scalar(b"x");
+                p * x
+            })
+            .sum();
 
         // Generate secret nonce
         let mut rng = transcript
@@ -104,9 +113,9 @@ impl Signature {
 
         // Compute challenge scalar
         let e = transcript.challenge_scalar(b"e");
-        let s = r + e*aggregated_privkey;
+        let s = r + e * aggregated_privkey;
 
-        Signature{R,s}
+        Signature { R, s }
     }
 }
 
@@ -142,7 +151,10 @@ mod tests {
         let gens = PedersenGens::default();
         let mut transcript = Transcript::new(b"empty");
         let sig = Signature::sign_aggregated(&mut transcript, &[]);
-        assert!(sig.verify_aggregated(&mut transcript, &[]).verify(&gens).is_ok());
+        assert!(sig
+            .verify_aggregated(&mut transcript, &[])
+            .verify(&gens)
+            .is_ok());
     }
 
     #[test]
@@ -158,7 +170,10 @@ mod tests {
         };
 
         let mut transcript = Transcript::new(b"single_signature");
-        assert!(sig.verify_single(&mut transcript, pubkey).verify(&gens).is_ok());
+        assert!(sig
+            .verify_single(&mut transcript, pubkey)
+            .verify(&gens)
+            .is_ok());
     }
 
     #[test]
@@ -174,7 +189,10 @@ mod tests {
 
         let mut transcript = Transcript::new(b"single_signature");
         let wrong_pubkey = (Scalar::random(&mut rand::thread_rng()) * gens.B).compress();
-        assert!(sig.verify_single(&mut transcript, wrong_pubkey).verify(&gens).is_err());
+        assert!(sig
+            .verify_single(&mut transcript, wrong_pubkey)
+            .verify(&gens)
+            .is_err());
     }
 
     #[test]
@@ -192,7 +210,10 @@ mod tests {
         };
 
         let mut transcript = Transcript::new(b"two_key_signature");
-        assert!(sig.verify_aggregated(&mut transcript, &[pubkey1, pubkey2]).verify(&gens).is_ok());
+        assert!(sig
+            .verify_aggregated(&mut transcript, &[pubkey1, pubkey2])
+            .verify(&gens)
+            .is_ok());
     }
 
     #[test]
@@ -210,6 +231,9 @@ mod tests {
         };
 
         let mut transcript = Transcript::new(b"two_key_signature");
-        assert!(sig.verify_aggregated(&mut transcript, &[pubkey2, pubkey1]).verify(&gens).is_err());
+        assert!(sig
+            .verify_aggregated(&mut transcript, &[pubkey2, pubkey1])
+            .verify(&gens)
+            .is_err());
     }
 }
