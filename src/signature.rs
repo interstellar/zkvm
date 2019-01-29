@@ -2,9 +2,11 @@
 
 #![allow(non_snake_case)]
 
+use bulletproofs::PedersenGens;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
+use rand::rngs::ThreadRng;
 
 use crate::errors::VMError;
 use crate::point_ops::PointOp;
@@ -39,12 +41,8 @@ impl Signature {
 
         let mut pairs: Vec<(Scalar, CompressedRistretto)> = Vec::with_capacity(pubkeys.len() + 1);
 
-        // Skip randomization factor for the first pubkey to be more efficient in a single-key case
-        if pubkeys.len() > 0 {
-            pairs.push((Scalar::one(), pubkeys[0]));
-        }
-        // Apply randomization factors to all the other pubkeys
-        let i: usize = 1;
+        // Apply randomization factors to all pubkeys
+        let i: usize = 0;
         while i < pubkeys.len() {
             let x = transcript.challenge_scalar(b"x");
             pairs.push((x, pubkeys[i]));
@@ -76,7 +74,39 @@ impl Signature {
 
     /// Creates an aggregated signature for a set of private keys
     pub fn sign_aggregated(&self, transcript: &mut Transcript, privkeys: &[Scalar]) -> Self {
-        unimplemented!()
+        // Derive public keys from privkeys 
+        let gens = PedersenGens::default();
+        let pubkeys = privkeys.iter().map(|p| (p * gens.B).compress()).collect::<Vec<_>>();
+
+        // Commit pubkeys
+        let n = pubkeys.len();
+        transcript.commit_u64(b"n", n as u64);
+        for p in pubkeys.iter() {
+            transcript.commit_point(b"P", p);
+        }
+
+        // Generate aggregated private key
+        let aggregated_privkey: Scalar = privkeys.iter().map(|p| {
+            let x = transcript.challenge_scalar(b"x");
+            p * x
+        }).sum();
+
+        // Generate secret nonce
+        let mut rng = transcript
+            .build_rng()
+            .commit_witness_bytes(b"privkey", aggregated_privkey.as_bytes())
+            .finalize(&mut rand::thread_rng());
+        let r = Scalar::random(&mut rng);
+
+        // Commit the nonce to the transcript
+        let R = (r * gens.B).compress();
+        transcript.commit_point(b"R", &R);
+
+        // Compute challenge scalar
+        let e = transcript.challenge_scalar(b"e");
+        let s = r + e*aggregated_privkey;
+
+        Signature{R,s}
     }
 }
 

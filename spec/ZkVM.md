@@ -765,8 +765,7 @@ The protocol is the following:
     ```
 11. Prover blinds the secrets `dlog(P[i])` using the nonce and the challenge:
     ```
-    s[i] = r[i] + e·x[i]·dlog(P[i])
-      s  = sum{s[i]}
+    s = r + e·sum{x[i]·dlog(P[i])}
     ```
 12. Prover sends `s` to the verifier.
 13. Verifier checks the relation:
