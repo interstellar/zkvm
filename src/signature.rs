@@ -10,7 +10,6 @@ use merlin::Transcript;
 use crate::errors::VMError;
 use crate::point_ops::PointOp;
 use crate::transcript::TranscriptProtocol;
-use crate::key::VerificationKey;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Signature {
@@ -140,6 +139,18 @@ impl Signature {
         buf[..32].copy_from_slice(self.R.as_bytes());
         buf[32..].copy_from_slice(self.s.as_bytes());
         buf
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct VerificationKey(pub CompressedRistretto);
+
+impl VerificationKey {
+
+    // Constructs a VerificationKey from the private key.
+    pub fn from_secret(privkey: &Scalar) -> Self {
+        let gens = PedersenGens::default();
+        VerificationKey((privkey * gens.B).compress())
     }
 }
 

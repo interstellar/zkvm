@@ -9,11 +9,10 @@ use std::iter::FromIterator;
 
 use crate::encoding;
 use crate::errors::VMError;
-use crate::key::VerificationKey;
 use crate::ops::Instruction;
 use crate::point_ops::PointOp;
 use crate::predicate::Predicate;
-use crate::signature::Signature;
+use crate::signature::*;
 use crate::transcript::TranscriptProtocol;
 use crate::txlog::{Entry, TxID, UTXO};
 use crate::types::*;
