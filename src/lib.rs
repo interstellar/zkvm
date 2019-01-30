@@ -13,6 +13,7 @@ extern crate failure;
 
 mod encoding;
 mod errors;
+mod key;
 mod ops;
 mod point_ops;
 mod predicate;

@@ -21,18 +21,22 @@ pub struct PointOp {
 }
 
 impl PointOp {
+    pub fn generator() -> PedersenGens {
+        PedersenGens::default()
+    }
+
     /// Non-batched verification of an individual point operation.
-    pub fn verify(self, gens: &PedersenGens) -> Result<(), VMError> {
+    pub fn verify(self) -> Result<(), VMError> {
         let (mut weights, points): (Vec<_>, Vec<_>) = self.arbitrary.into_iter().unzip();
         let mut points: Vec<_> = points.into_iter().map(|p| p.decompress()).collect();
 
         if let Some(w) = self.primary {
             weights.push(w);
-            points.push(Some(gens.B));
+            points.push(Some(PointOp::generator().B));
         }
         if let Some(w) = self.secondary {
             weights.push(w);
-            points.push(Some(gens.B_blinding));
+            points.push(Some(PointOp::generator().B_blinding));
         }
 
         if points.len() == 0 {
@@ -61,13 +65,12 @@ mod tests {
 
     #[test]
     fn empty() {
-        let gens = PedersenGens::default();
         let op = PointOp {
             primary: None,
             secondary: None,
             arbitrary: Vec::new(),
         };
-        assert!(op.verify(&gens).is_ok());
+        assert!(op.verify().is_ok());
     }
 
     #[test]
@@ -78,21 +81,21 @@ mod tests {
             secondary: None,
             arbitrary: vec![(-Scalar::one(), gens.B.compress())],
         };
-        assert!(op.verify(&gens).is_ok());
+        assert!(op.verify().is_ok());
 
         let op = PointOp {
             primary: Some(Scalar::one()),
             secondary: None,
             arbitrary: vec![(-Scalar::one(), gens.B_blinding.compress())],
         };
-        assert!(op.verify(&gens).is_err());
+        assert!(op.verify().is_err());
 
         let op = PointOp {
             primary: Some(Scalar::one()),
             secondary: None,
             arbitrary: vec![(Scalar::one(), gens.B.compress())],
         };
-        assert!(op.verify(&gens).is_err());
+        assert!(op.verify().is_err());
     }
 
     #[test]
@@ -103,21 +106,21 @@ mod tests {
             secondary: Some(Scalar::one()),
             arbitrary: vec![(-Scalar::one(), gens.B_blinding.compress())],
         };
-        assert!(op.verify(&gens).is_ok());
+        assert!(op.verify().is_ok());
 
         let op = PointOp {
             primary: None,
             secondary: Some(Scalar::one()),
             arbitrary: vec![(-Scalar::one(), gens.B.compress())],
         };
-        assert!(op.verify(&gens).is_err());
+        assert!(op.verify().is_err());
 
         let op = PointOp {
             primary: None,
             secondary: Some(Scalar::one()),
             arbitrary: vec![(Scalar::one(), gens.B_blinding.compress())],
         };
-        assert!(op.verify(&gens).is_err());
+        assert!(op.verify().is_err());
     }
 
     #[test]
@@ -131,7 +134,7 @@ mod tests {
                 (-Scalar::one(), gens.B.compress()),
             ],
         };
-        assert!(op.verify(&gens).is_ok());
+        assert!(op.verify().is_ok());
     }
 
     #[test]
@@ -145,6 +148,6 @@ mod tests {
                 (Scalar::one(), gens.B.compress()),
             ],
         };
-        assert!(op.verify(&gens).is_ok());
+        assert!(op.verify().is_ok());
     }
 }
