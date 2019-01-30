@@ -21,22 +21,19 @@ pub struct PointOp {
 }
 
 impl PointOp {
-    fn generator() -> PedersenGens {
-        PedersenGens::default()
-    }
-
     /// Non-batched verification of an individual point operation.
     pub fn verify(self) -> Result<(), VMError> {
+        let gens = PedersenGens::default();
         let (mut weights, points): (Vec<_>, Vec<_>) = self.arbitrary.into_iter().unzip();
         let mut points: Vec<_> = points.into_iter().map(|p| p.decompress()).collect();
 
         if let Some(w) = self.primary {
             weights.push(w);
-            points.push(Some(PointOp::generator().B));
+            points.push(Some(gens.B));
         }
         if let Some(w) = self.secondary {
             weights.push(w);
-            points.push(Some(PointOp::generator().B_blinding));
+            points.push(Some(gens.B_blinding));
         }
 
         if points.len() == 0 {
