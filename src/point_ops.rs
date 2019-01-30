@@ -21,7 +21,7 @@ pub struct PointOp {
 }
 
 impl PointOp {
-    pub fn generator() -> PedersenGens {
+    fn generator() -> PedersenGens {
         PedersenGens::default()
     }
 
