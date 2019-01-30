@@ -53,10 +53,12 @@ impl PointOp {
     pub fn verify_batch(batch: &[PointOp]) -> Result<(), VMError> {
         let gens = PedersenGens::default();
 
-        let length: usize = batch.iter().map(|p| p.arbitrary.len()).sum();
+        // Get the total number of points in batch
+        let dyn_length: usize = batch.iter().map(|p| p.arbitrary.len()).sum();
+        let length = 2 + dyn_length; // include the (B, B_blinding) pair
 
         let mut weights: Vec<Scalar> = Vec::with_capacity(length + 2);
-        let mut points: Vec<Option<RistrettoPoint>> = Vec::with_capacity(length + 2);
+        let mut points: Vec<Option<RistrettoPoint>> = Vec::with_capacity(length);
 
         // Add base points
         points.push(Some(gens.B));
