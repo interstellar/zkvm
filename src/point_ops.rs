@@ -63,14 +63,16 @@ impl PointOp {
         // Add base points
         points.push(Some(gens.B));
         points.push(Some(gens.B_blinding));
-        weights.push(Scalar::default());
-        weights.push(Scalar::default());
+        weights.push(Scalar::zero());
+        weights.push(Scalar::zero());
+
+        let mut rng = rand::thread_rng();
 
         // Iterate over every point, adding both weights and points to
         // our arrays
         for p in batch.iter() {
             // Sample free variable e
-            let e = Scalar::random(&mut rand::thread_rng());
+            let e = Scalar::random(&mut rng);
 
             // Add weights for base points
             if let Some(w) = p.primary {
