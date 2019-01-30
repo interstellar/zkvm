@@ -53,9 +53,7 @@ impl PointOp {
     pub fn verify_batch(batch: &[PointOp]) -> Result<(), VMError> {
         let gens = PedersenGens::default();
 
-        let length: usize = batch.iter().map(|p| {
-            p.arbitrary.len()
-        }).sum();
+        let length: usize = batch.iter().map(|p| p.arbitrary.len()).sum();
 
         let mut weights: Vec<Scalar> = Vec::with_capacity(length + 2);
         let mut points: Vec<Option<RistrettoPoint>> = Vec::with_capacity(length + 2);
@@ -74,24 +72,21 @@ impl PointOp {
 
             // Add weights for base points
             if let Some(w) = p.primary {
-                weights[0] = weights[0] + e*w;
+                weights[0] = weights[0] + e * w;
             }
             if let Some(w) = p.secondary {
-                weights[1] = weights[1] + e*w;
+                weights[1] = weights[1] + e * w;
             }
 
             // Add weights and points for arbitrary points
-            let arbitrary_scalars = p.arbitrary.iter().map(|p| {
-                p.0 * e
-            });
-            let arbitrary_points = p.arbitrary.iter().map(|p| {
-                p.1.decompress()
-            });
+            let arbitrary_scalars = p.arbitrary.iter().map(|p| p.0 * e);
+            let arbitrary_points = p.arbitrary.iter().map(|p| p.1.decompress());
             weights.extend(arbitrary_scalars);
             points.extend(arbitrary_points);
         }
 
-        let check = RistrettoPoint::optional_multiscalar_mul(weights, points).ok_or_else(|| VMError::PointOperationFailed)?;
+        let check = RistrettoPoint::optional_multiscalar_mul(weights, points)
+            .ok_or_else(|| VMError::PointOperationFailed)?;
         if !check.is_identity() {
             return Err(VMError::PointOperationFailed);
         }
