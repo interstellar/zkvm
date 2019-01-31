@@ -10,15 +10,24 @@ use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
 /// A trait for the stack item: data, value, contract etc.
-pub trait VMItem {
+pub trait ItemTrait {
     /// The parameter for the type of the items that are "data types".
-    type DataType: VMData;
+    type DataType: DataTrait;
+
+    fn to_data<D>(&mut self) -> Result<D, VMError>
+    where D: Into<Self::DataType> {
+        unimplemented!();
+    }
+
+    fn to_value(&mut self) -> Result<Value, VMError> {
+        unimplemented!();
+    }
 }
 
 /// A trait for the "data" items on the stack.
 /// Prover impls that trait for concrete structures: commitments, predicates etc,
 /// while the verifier uses a simple byteslice for all of these things.
-pub trait VMData: Clone {
+pub trait DataTrait: Clone {
 }
 
 #[derive(Debug)]
@@ -76,6 +85,24 @@ pub struct Constraint {
     // TBD
 }
 
+impl<'tx> ItemTrait for Item<'tx>{
+    // Downcasts to Data type
+    fn to_data(self) -> Result<Data<'tx>, VMError> {
+        match self {
+            Item::Data(x) => Ok(x),
+            _ => Err(VMError::TypeNotData),
+        }
+    }
+
+    // Downcasts to Value type
+    fn to_value(self) -> Result<Value, VMError> {
+        match self {
+            Item::Value(v) => Ok(v),
+            _ => Err(VMError::TypeNotValue),
+        }
+    }
+}
+
 impl<'tx> Item<'tx> {
     // Downcasts to a portable type
     pub fn to_portable(self) -> Result<PortableItem<'tx>, VMError> {
@@ -83,14 +110,6 @@ impl<'tx> Item<'tx> {
             Item::Data(x) => Ok(PortableItem::Data(x)),
             Item::Value(x) => Ok(PortableItem::Value(x)),
             _ => Err(VMError::TypeNotPortable),
-        }
-    }
-
-    // Downcasts to Data type
-    pub fn to_data(self) -> Result<Data<'tx>, VMError> {
-        match self {
-            Item::Data(x) => Ok(x),
-            _ => Err(VMError::TypeNotData),
         }
     }
 
@@ -107,14 +126,6 @@ impl<'tx> Item<'tx> {
         match self {
             Item::Expression(expr) => Ok(expr),
             _ => Err(VMError::TypeNotExpression),
-        }
-    }
-
-    // Downcasts to Value type
-    pub fn to_value(self) -> Result<Value, VMError> {
-        match self {
-            Item::Value(v) => Ok(v),
-            _ => Err(VMError::TypeNotValue),
         }
     }
 

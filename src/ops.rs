@@ -2,10 +2,10 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
 use crate::types::Data;
-use crate::types::VMData;
+use crate::types::DataTrait;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Instruction<D: VMData> {
+pub enum Instruction<D: DataTrait> {
     Push(D), // size of the string
     Drop,
     Dup(usize),  // index of the item
@@ -106,7 +106,7 @@ impl Opcode {
     }
 }
 
-impl<T: VMData> Instruction<T> {
+impl<T: DataTrait> Instruction<T> {
     /// Returns a parsed instruction with a size that it occupies in the program string.
     /// E.g. a push instruction with 5-byte string occupies 1+4+5=10 bytes
     /// (4 for the LE32 length prefix).
