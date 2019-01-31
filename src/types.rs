@@ -19,15 +19,6 @@ pub trait VMItem {
 /// Prover impls that trait for concrete structures: commitments, predicates etc,
 /// while the verifier uses a simple byteslice for all of these things.
 pub trait VMData: Clone {
-    /// Converts 
-    fn to_item<T>(self) -> T where T: VMItem<DataType=Self>;
-}
-
-// All Data types are convertible to item
-impl<T: VMItem> From<T::DataType> for T {
-    fn from(data: T::DataType) -> T {
-        data.to_item()
-    } 
 }
 
 #[derive(Debug)]

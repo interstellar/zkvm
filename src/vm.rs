@@ -127,8 +127,8 @@ enum VariableCommitment<C: VMCommitment> {
 }
 
 // TODO: rename this later
-pub trait VMtrait {
-    type DataType: VMData;
+pub trait VM {
+    type DataType: VMData + Into<Self::ItemType>;
     type ItemType: VMItem<DataType=Self::DataType>;
     type ProgramType: VMProgram;
     type KeyType: VMKey;
