@@ -1,6 +1,7 @@
 use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
+use crate::types::Data;
 use crate::types::VMData;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -105,13 +106,13 @@ impl Opcode {
     }
 }
 
-impl Instruction {
+impl<T: VMData> Instruction<T> {
     /// Returns a parsed instruction with a size that it occupies in the program string.
     /// E.g. a push instruction with 5-byte string occupies 1+4+5=10 bytes
     /// (4 for the LE32 length prefix).
     ///
     /// Return `None` if there is not enough bytes to parse an instruction.
-    pub fn parse(program: &[u8]) -> Option<(Instruction, usize)> {
+    pub fn parse<'tx>(program: &'tx [u8]) -> Option<(Instruction<Data<'tx>>, usize)> {
         if program.len() == 0 {
             return None;
         }

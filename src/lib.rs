@@ -26,4 +26,6 @@ mod vm;
 
 pub use self::errors::VMError;
 pub use self::txlog::{Entry, TxID, UTXO};
-pub use self::vm::{Tx, VerifiedTx, VM};
+pub use self::vm::{Tx, VerifiedTx};
+pub use self::prover::{Prover};
+pub use self::verifier::{Verifier};

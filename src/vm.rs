@@ -35,7 +35,6 @@ pub trait VMProgram {
 
 }
 
-
 pub trait VMCommitment {
 }
 
@@ -106,6 +105,25 @@ pub struct State<I,P,K,C,CS> where
     signtx_keys: Vec<K>,
     variable_commitments: Vec<VariableCommitment<C>>,
     cs: CS,
+}
+
+/// An state of running a single program string.
+/// VM consists of a stack of such _Runs_.
+struct Run<P: VMProgram> {
+    program: P,
+    offset: usize,
+}
+
+/// And indirect reference to a high-level variable within a constraint system.
+/// Variable types store index of such commitments that allows replacing them.
+enum VariableCommitment<C: VMCommitment> {
+    /// Variable is not attached to the CS yet,
+    /// so its commitment is replaceable via `reblind`.
+    Detached(C),
+
+    /// Variable is attached to the CS yet and has an index in CS,
+    /// so its commitment is no longer replaceable via `reblind`.
+    Attached(C, r1cs::Variable),
 }
 
 // TODO: rename this later
@@ -421,7 +439,7 @@ pub trait VMtrait {
     }
 
     // Return the next instruction and advance the program state pointer
-    fn next_instruction(&mut self) -> Instruction {
+    fn next_instruction(&mut self) -> Instruction<Self::DataType> {
         // Maybe implemented by each type, or in the Run type? 
         // let (instr, instr_size) =
         //     Instruction::parse(&self.state().current_run.program[self.state().current_run.offset..])
@@ -442,6 +460,8 @@ impl<I,P,K,C,CS> State<I,P,K,C,CS> where I: VMItem, P: VMProgram, K: VMKey, C: V
         self.stack.push(item.into())
     }
 }
+
+/*
 
 /// The ZkVM state used to validate a transaction.
 pub struct VM<'tx, 'transcript, 'gens> {
@@ -470,24 +490,6 @@ pub struct VM<'tx, 'transcript, 'gens> {
     cs: r1cs::Verifier<'transcript, 'gens>,
 }
 
-/// An state of running a single program string.
-/// VM consists of a stack of such _Runs_.
-struct Run<P: VMProgram> {
-    program: P,
-    offset: usize,
-}
-
-/// And indirect reference to a high-level variable within a constraint system.
-/// Variable types store index of such commitments that allows replacing them.
-enum VariableCommitment<C: VMCommitment> {
-    /// Variable is not attached to the CS yet,
-    /// so its commitment is replaceable via `reblind`.
-    Detached(C),
-
-    /// Variable is attached to the CS yet and has an index in CS,
-    /// so its commitment is no longer replaceable via `reblind`.
-    Attached(C, r1cs::Variable),
-}
 
 impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     /// Creates a new instance of ZkVM with the appropriate parameters
@@ -860,7 +862,17 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     }
 }
 
+*/
+
+
+
+
+
+
 // Utility methods
+
+
+/*
 
 impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     fn pop_item(&mut self) -> Result<Item<'tx>, VMError> {
@@ -1053,3 +1065,5 @@ impl<'tx> Contract<'tx> {
         size
     }
 }
+
+*/

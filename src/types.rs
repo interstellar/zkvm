@@ -9,12 +9,25 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
-pub trait VMData:Clone {
-    
+/// A trait for the stack item: data, value, contract etc.
+pub trait VMItem {
+    /// The parameter for the type of the items that are "data types".
+    type DataType: VMData;
 }
 
-pub trait VMItem:From<Self::DataType> {
-    type DataType: VMData;
+/// A trait for the "data" items on the stack.
+/// Prover impls that trait for concrete structures: commitments, predicates etc,
+/// while the verifier uses a simple byteslice for all of these things.
+pub trait VMData: Clone {
+    /// Converts 
+    fn to_item<T>(self) -> T where T: VMItem<DataType=Self>;
+}
+
+// All Data types are convertible to item
+impl<T: VMItem> From<T::DataType> for T {
+    fn from(data: T::DataType) -> T {
+        data.to_item()
+    } 
 }
 
 #[derive(Debug)]
