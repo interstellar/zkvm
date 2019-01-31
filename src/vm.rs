@@ -27,7 +27,7 @@ pub const DATA_TYPE: u8 = 0x00;
 pub const VALUE_TYPE: u8 = 0x01;
 
 // Trait defined for signing and verification keys.
-// TODO: define this in signature?
+// This is defined in `vm` because it is purely VM-specific representation of the keys.
 pub trait KeyTrait {
 
 }
@@ -135,7 +135,8 @@ pub enum VariableCommitment<C: CommitmentTrait> {
     Attached(C, r1cs::Variable),
 }
 
-// TODO: rename this later
+/// `VM` is a common trait for verifier's and prover's instances of ZkVM
+/// that implements instructions generically.
 pub trait VM {
     type DataType: DataTrait + Into<Self::ItemType>;
     type ItemType: ItemTrait<DataType=Self::DataType>;
@@ -449,8 +450,11 @@ pub trait VM {
         Ok(())
     }
 
-    // TODO: this should probably be implemented separately in 
-    // prover and verifier.
+    // Prover:
+    // - remember the KeyType (Scalar) in a list and make a sig later.
+    // Verifier:
+    // - remember the KeyType (Point) in a list and check a sig later.
+    // Both: put the payload onto the stack.
     // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
         let state = self.state();
