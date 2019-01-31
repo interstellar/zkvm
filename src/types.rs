@@ -9,6 +9,14 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
+pub trait VMData:Clone {
+    
+}
+
+pub trait VMItem:From<Self::DataType> {
+    type DataType: VMData;
+}
+
 #[derive(Debug)]
 pub enum Item<'tx> {
     Data(Data<'tx>),

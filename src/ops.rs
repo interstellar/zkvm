@@ -1,9 +1,11 @@
 use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
+use crate::types::VMData;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Instruction {
-    Push(usize), // size of the string
+pub enum Instruction<D: VMData> {
+    Push(D), // size of the string
     Drop,
     Dup(usize),  // index of the item
     Roll(usize), // index of the item
