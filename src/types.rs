@@ -48,7 +48,6 @@ pub enum DataWitness<'tx> {
 pub struct Contract<'tx> {
     pub(crate) payload: Vec<PortableItem<'tx>>,
     pub(crate) predicate: Predicate,
-    // TBD: witness
 }
 
 #[derive(Debug)]

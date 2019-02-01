@@ -107,15 +107,15 @@ pub struct VariableCommitment {
     /// Pedersen commitment to a variable
     commitment: CompressedRistretto,
 
-    /// Witness value and its blinding factor for the commitment
-    witness: Option<CommitmentWitness>,
-
     /// Attached/detached state
     /// None if the variable is not attached to the CS yet,
     /// so its commitment is replaceable via `reblind`.
     /// Some if variable is attached to the CS yet and has an index in CS,
     /// so its commitment is no longer replaceable via `reblind`.
     variable: Option<r1cs::Variable>,
+
+    /// Witness value and its blinding factor for the commitment
+    witness: Option<CommitmentWitness>,
 }
 
 /// `VM` is a common trait for verifier's and prover's instances of ZkVM
