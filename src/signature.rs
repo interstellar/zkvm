@@ -10,7 +10,6 @@ use merlin::Transcript;
 use crate::errors::VMError;
 use crate::point_ops::PointOp;
 use crate::transcript::TranscriptProtocol;
-use crate::vm::KeyTrait;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Signature {
@@ -148,10 +147,6 @@ impl VerificationKey {
         let gens = PedersenGens::default();
         VerificationKey((privkey * gens.B).compress())
     }
-}
-
-impl KeyTrait for VerificationKey {
-
 }
 
 #[cfg(test)]

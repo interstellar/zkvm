@@ -5,26 +5,15 @@ use crate::point_ops::PointOp;
 use crate::txlog::{Entry, TxID, UTXO};
 use crate::types::*;
 
-use crate::signature::VerificationKey;
 use crate::vm::{VM,State,VariableCommitment};
 
 pub struct Verifier<'tx, 'transcript, 'gens> {
-    state: State<
-    	Item<'tx>, &'tx [u8],
-    	VerificationKey,
-    	CompressedRistretto,
-    	r1cs::Verifier<'transcript, 'gens>
-    >,
+    state: State<'tx, r1cs::Verifier<'transcript, 'gens>>,
     deferred_operations: Vec<PointOp>,
 }
 
-impl<'tx, 'transcript, 'gens> VM for Verifier<'tx, 'transcript, 'gens> {
-    type DataType = Data<'tx>;
-    type ItemType = Item<'tx>;
-    type ProgramType = &'tx [u8];
-    type KeyType = VerificationKey;
-    type CommitmentType = CompressedRistretto;
-    type CSType = r1cs::Verifier<'transcript, 'gens>;
+impl<'tx, 'transcript, 'gens> VM<'tx> for Verifier<'tx, 'transcript, 'gens> {
+    type CS = r1cs::Verifier<'transcript, 'gens>;
 
 
     // Unimplemented functions

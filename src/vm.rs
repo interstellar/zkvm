@@ -26,26 +26,6 @@ pub const DATA_TYPE: u8 = 0x00;
 /// Prefix for the value type in the Output Structure
 pub const VALUE_TYPE: u8 = 0x01;
 
-// Trait defined for signing and verification keys.
-// This is defined in `vm` because it is purely VM-specific representation of the keys.
-pub trait KeyTrait {
-
-}
-
-pub trait ProgramTrait {
-
-}
-
-impl <'tx> ProgramTrait for &'tx [u8] {
-
-}
-
-pub trait CommitmentTrait {
-}
-
-impl CommitmentTrait for CompressedRistretto {
-
-}
 
 /// Instance of a transaction that contains all necessary data to validate it.
 pub struct Tx {
@@ -86,16 +66,9 @@ pub struct VerifiedTx {
     pub log: Vec<Entry>,
 }
 
-pub struct State<I,P,K,C,CS> where 
-        I: ItemTrait, 
-        P: ProgramTrait, 
-        K: KeyTrait,
-        C: CommitmentTrait, 
-        CS: r1cs::ConstraintSystem,
-{
+pub struct State<'tx, CS: r1cs::ConstraintSystem> {
     mintime: u64,
     maxtime: u64,
-    program: P,
 
     // is true when tx version is in the future and
     // we allow treating unassigned opcodes as no-ops.
@@ -106,58 +79,51 @@ pub struct State<I,P,K,C,CS> where
     unique: bool,
 
     // stack of all items in the VM
-    stack: Vec<I>,
+    stack: Vec<Item<'tx>>,
 
-    current_run: Run<P>,
-    run_stack: Vec<Run<P>>,
+    current_run: Run<'tx>,
+    run_stack: Vec<Run<'tx>>,
     txlog: Vec<Entry>,
-    signtx_keys: Vec<K>,
-    variable_commitments: Vec<VariableCommitment<C>>,
+    signtx_keys: Vec<Predicate>,
+    variable_commitments: Vec<VariableCommitment>,
     cs: CS,
 }
 
 /// An state of running a single program string.
 /// VM consists of a stack of such _Runs_.
-struct Run<P: ProgramTrait> {
-    program: P,
-    offset: usize,
+/// The slices begin at the next instruction to be processed.
+enum Run<'tx> {
+    /// Prover's running program
+    ProgramWitness(&'tx [Instruction<'tx>]),
+
+    /// Verifier's running program
+    Program(&'tx [u8])
 }
 
 /// And indirect reference to a high-level variable within a constraint system.
 /// Variable types store index of such commitments that allows replacing them.
-pub enum VariableCommitment<C: CommitmentTrait> {
-    /// Variable is not attached to the CS yet,
-    /// so its commitment is replaceable via `reblind`.
-    Detached(C),
+pub struct VariableCommitment {
+    /// Pedersen commitment to a variable
+    commitment: CompressedRistretto,
 
-    /// Variable is attached to the CS yet and has an index in CS,
+    /// Witness value and its blinding factor for the commitment
+    witness: Option<CommitmentWitness>,
+
+    /// Attached/detached state
+    /// None if the variable is not attached to the CS yet,
+    /// so its commitment is replaceable via `reblind`.
+    /// Some if variable is attached to the CS yet and has an index in CS,
     /// so its commitment is no longer replaceable via `reblind`.
-    Attached(C, r1cs::Variable),
+    variable: Option<r1cs::Variable>,
 }
 
 /// `VM` is a common trait for verifier's and prover's instances of ZkVM
 /// that implements instructions generically.
-pub trait VM {
-    type DataType: DataTrait + Into<Self::ItemType>;
-    type ItemType: ItemTrait<DataType=Self::DataType>;
-    type ProgramType: ProgramTrait;
-    type KeyType: KeyTrait;
-    type CommitmentType: CommitmentTrait;
-    type CSType: r1cs::ConstraintSystem;
+pub trait VM<'tx> {
+    type CS: r1cs::ConstraintSystem;
 
-    fn state(&mut self) -> &mut State<
-        Self::ItemType,
-        Self::ProgramType,
-        Self::KeyType,
-        Self::CommitmentType,
-        Self::CSType> 
-    {
+    fn state(&mut self) -> &mut State<'tx, Self::CS> {
         unimplemented!()
-    }
-
-    // Question: do we need to call set_state in order for the State to change? 
-    fn set_state(&mut self, state: &mut State<Self::ItemType,Self::ProgramType,Self::KeyType,Self::CommitmentType,Self::CSType>) {
-        unimplemented!();
     }
 
     /// Runs through the entire program and nested programs until completion.
@@ -185,7 +151,6 @@ pub trait VM {
         if let Some(run) = state.run_stack.pop() {
             // Continue with the previously remembered program
             state.current_run = run;
-            self.set_state(state);
             return true;
         }
         // Finish the execution
@@ -197,7 +162,9 @@ pub trait VM {
         if let Some(instr) = self.next_instruction() {
             // Attempt to read the next instruction and advance the program state
             match instr {
-                Instruction::Push(data) => self.pushdata(&data)?,
+                // the data is just a slice, so the clone would copy the slice struct,
+                // not the actual buffer of bytes.
+                Instruction::Push(data) => self.pushdata(data.clone())?,
                 Instruction::Drop => self.drop()?,
                 Instruction::Dup(i) => self.dup(i)?,
                 Instruction::Roll(i) => self.roll(i)?,
@@ -244,9 +211,8 @@ pub trait VM {
         }
     }
 
-    fn pushdata(&mut self, data: &Self::DataType) -> Result<(), VMError> {
-        let state = self.state();
-        state.push_item(data.clone());
+    fn pushdata(&mut self, data: Data<'tx>) -> Result<(), VMError> {
+        self.state().push_item(data);
         Ok(())
     }
 
@@ -479,7 +445,7 @@ pub trait VM {
 
     // Return the next instruction, if it exists, and advance the 
     // program state pointer.
-    fn next_instruction(&mut self) -> Option<Instruction<Self::DataType>> {
+    fn next_instruction(&mut self) -> Option<Instruction<'tx>> {
         // Maybe implemented by each type, or in the Run type? 
         // let (instr, instr_size) =
         //     Instruction::parse(&self.state().current_run.program[self.state().current_run.offset..])
@@ -491,28 +457,25 @@ pub trait VM {
     }
 
     // Unimplemented functions
-     fn get_variable_commitment(&self, var: Variable) -> Self::CommitmentType {
+     fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
         unimplemented!();
     }
 }
 
-impl<I,P,K,C,CS> State<I,P,K,C,CS> where I: ItemTrait, P: ProgramTrait, K: KeyTrait, C: CommitmentTrait, CS: r1cs::ConstraintSystem  {
+impl<'tx, CS: r1cs::ConstraintSystem> State<'tx, CS> {
 
     fn push_item<T>(&mut self, item: T)
     where
-        T: Into<I>,
+        T: Into<Item<'tx>>,
     {
         self.stack.push(item.into())
     }
 
-    fn pop_item(&mut self) -> Result<I, VMError> {
+    fn pop_item(&mut self) -> Result<Item<'tx>, VMError> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
 
-    fn make_variable<M>(&mut self, commitment: M) -> Variable
-    where 
-        M: Into<C>
-    {
+    fn make_variable(&mut self, commitment: Data<'tx>) -> Variable {
         let index = self.variable_commitments.len();
         self.variable_commitments
             .push(VariableCommitment::Detached(commitment.into()));

@@ -2,11 +2,10 @@ use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
 use crate::types::Data;
-use crate::types::DataTrait;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Instruction<D: DataTrait> {
-    Push(D), // size of the string
+#[derive(Clone, Debug)]
+pub enum Instruction<'tx> {
+    Push(Data<'tx>), // size of the string
     Drop,
     Dup(usize),  // index of the item
     Roll(usize), // index of the item
@@ -106,13 +105,13 @@ impl Opcode {
     }
 }
 
-impl<T: DataTrait> Instruction<T> {
+impl<'tx> Instruction<'tx> {
     /// Returns a parsed instruction with a size that it occupies in the program string.
     /// E.g. a push instruction with 5-byte string occupies 1+4+5=10 bytes
     /// (4 for the LE32 length prefix).
     ///
     /// Return `None` if there is not enough bytes to parse an instruction.
-    pub fn parse<'tx>(program: &'tx [u8]) -> Option<(Instruction<Data<'tx>>, usize)> {
+    pub fn parse(program: &'tx [u8]) -> Option<(Self, usize)> {
         if program.len() == 0 {
             return None;
         }
@@ -135,7 +134,7 @@ impl<T: DataTrait> Instruction<T> {
                 }
                 let strlen = LittleEndian::read_u32(immdata) as usize;
                 let bytes = &immdata[4..4+strlen];
-                Some((Instruction::Push(Data {bytes}), 1 + 4 + strlen))
+                Some((Instruction::Push(Data::Opaque(bytes)), 1 + 4 + strlen))
             }
             Opcode::Drop => Some((Instruction::Drop, 1)),
             Opcode::Dup => {
