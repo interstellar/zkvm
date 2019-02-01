@@ -11,6 +11,7 @@ use crate::point_ops::PointOp;
 use crate::txlog::{Entry, TxID, UTXO};
 use crate::types::*;
 use crate::errors::VMError;
+use crate::encoding;
 
 use crate::vm::{VM,VMInternal,Tx,VerifiedTx,State,VariableCommitment};
 use crate::predicate::Predicate;
@@ -72,6 +73,71 @@ impl<'t, 'g> Verifier<'t, 'g> {
             log: vmstate.txlog,
         })
     }
+
+    fn decode_input(&mut self, input: Data) -> Result<(Contract, TxID, UTXO), VMError> {
+//        Input  =  PreviousTxID || PreviousOutput
+        // PreviousTxID  =  <32 bytes>
+
+        let input_bytes = match input {
+            Data::Opaque(_) => input.to_u8x32(&self.tx.program)?,
+            // Data::Opaque(range) => self.tx.program.get(range).ok_or(VMError::FormatError)?,
+            Data::Witness(_) => return Err(VMError::DataNotOpaque)
+        };
+        let (txid, output) = encoding::read_u8x32(&input_bytes)?;
+        let txid = TxID(txid);
+        let contract = self.decode_output(output)?;
+        let utxo = UTXO::from_output(output, &txid);
+        Ok((contract, txid, utxo))
+    }
+
+    /// Parses the output and returns an instantiated contract.
+    fn decode_output(&mut self, output: &[u8]) -> Result<(Contract), VMError> {
+        //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
+        // Predicate  =  <32 bytes>
+        //      Item  =  enum { Data, Value }
+        //      Data  =  0x00  ||  LE32(len)  ||  <bytes>
+        //     Value  =  0x01  ||  <32 bytes> ||  <32 bytes>
+
+        let (predicate, payload) = encoding::read_point(output)?;
+        let predicate = Predicate(predicate);
+
+        let (k, mut items) = encoding::read_usize(payload)?;
+
+        // sanity check: avoid allocating unreasonably more memory
+        // just because an untrusted length prefix says so.
+        if k > items.len() {
+            return Err(VMError::FormatError);
+        }
+
+        // TODO: replace the slices themselves with a tracking of the indices.
+
+        let mut payload: Vec<PortableItem> = Vec::with_capacity(k);
+        for _ in 0..k {
+            let (item_type, rest) = encoding::read_u8(items)?;
+            let item = match item_type {
+                DATA_TYPE => {
+                    let (len, rest) = encoding::read_usize(rest)?;
+                    let (bytes, rest) = encoding::read_bytes(len, rest)?;
+                    items = rest;
+                    PortableItem::Data(Data { bytes })
+                }
+                VALUE_TYPE => {
+                    let (qty, rest) = encoding::read_point(rest)?;
+                    let (flv, rest) = encoding::read_point(rest)?;
+
+                    let qty = self.make_variable(qty);
+                    let flv = self.make_variable(flv);
+
+                    items = rest;
+                    PortableItem::Value(Value { qty, flv })
+                }
+                _ => return Err(VMError::FormatError),
+            };
+            payload.push(item);
+        }
+
+        Ok(Contract { predicate, payload })
+    }
 }
 
 
@@ -112,6 +178,17 @@ impl<'t, 'g> VM for Verifier<'t, 'g> {
         };
 
         state.push_item(contract);
+        Ok(())
+    }
+
+    /// _input_ **input** → _contract_
+    fn input(&mut self) -> Result<(), VMError> {
+        let state = self.state();
+        let serialized_input = state.pop_item()?.to_data()?;
+        let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
+        state.push_item(contract);
+        state.txlog.push(Entry::Input(utxo));
+        state.unique = true;
         Ok(())
     }
 

@@ -30,6 +30,8 @@ pub fn read_usize<'a>(slice: &'a [u8]) -> Result<(usize, &'a [u8]), VMError> {
     Ok((n as usize, rest))
 }
 
+// TODO: have read_u8x32 return the range (rather than the slice)
+
 /// Reads a 32-byte array and returns the subsequent slice
 pub fn read_u8x32<'a>(slice: &'a [u8]) -> Result<([u8; 32], &'a [u8]), VMError> {
     if slice.len() < 32 {

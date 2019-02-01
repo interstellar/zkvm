@@ -78,7 +78,7 @@ pub struct State<CS: r1cs::ConstraintSystem> {
 
     // set to true by `input` and `nonce` instructions
     // when the txid is guaranteed to be unique.
-    unique: bool,
+    pub unique: bool,
 
     // stack of all items in the VM
     stack: Vec<Item>,
@@ -130,6 +130,8 @@ pub trait VM {
     fn issue(&mut self) -> Result<(), VMError>;
 
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
+
+    fn input(&mut self) -> Result<(), VMError>;
 }
 
 impl<CS: r1cs::ConstraintSystem> State<CS> {
@@ -303,26 +305,13 @@ pub trait VMInternal: VM {
         state.unique = true;
         Ok(())
     }
-
     
-
     fn retire(&mut self) -> Result<(), VMError> {
         let state = self.state();
         let value = state.pop_item()?.to_value()?;
         let qty = self.get_variable_commitment(value.qty);
         let flv = self.get_variable_commitment(value.flv);
         state.txlog.push(Entry::Retire(qty, flv));
-        Ok(())
-    }
-
-    /// _input_ **input** → _contract_
-    fn input(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let serialized_input = state.pop_item()?.to_data()?;
-        let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
-        state.push_item(contract);
-        state.txlog.push(Entry::Input(utxo));
-        state.unique = true;
         Ok(())
     }
 

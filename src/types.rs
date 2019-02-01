@@ -187,8 +187,7 @@ impl Data {
     pub fn to_point(self, program: &[u8]) -> Result<CompressedRistretto, VMError> {
         let point = match self {
             Data::Opaque(_) => CompressedRistretto(self.to_u8x32(program)?),
-            // TODO(vniu): implement to_point for prover
-            Data::Witness(_) => return Err(VMError::DataNotOpaque),
+            Data::Witness(_) => unimplemented!(),
         };
         Ok(point)
     }
