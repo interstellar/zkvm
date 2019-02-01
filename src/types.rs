@@ -12,22 +12,43 @@ use merlin::Transcript;
 /// A trait for the stack item: data, value, contract etc.
 pub trait ItemTrait {
     /// The parameter for the type of the items that are "data types".
-    type DataType: DataTrait;
+    type DataType: DataTrait + Into<Self>;
+    type ContractType: ContractTrait;
 
-    fn to_data<D>(&mut self) -> Result<D, VMError>
-    where D: Into<Self::DataType> {
-        unimplemented!();
-    }
+    /// Downcasts any item to a data item
+    fn to_data(self) -> Result<Self::DataType, VMError>;
 
-    fn to_value(&mut self) -> Result<Value, VMError> {
-        unimplemented!();
-    }
+    /// Downcasts to a portable type
+    fn to_portable(self) -> Result<PortableItem<Self::DataType>, VMError>;
+
+    /// Downcasts to Variable type
+    fn to_variable(self) -> Result<Variable, VMError>;
+
+    /// Downcasts to Expression type (Variable is NOT casted to Expression)
+    fn to_expression(self) -> Result<Expression, VMError>;
+
+    /// Downcasts to Value type
+    fn to_value(self) -> Result<Value, VMError>;
+
+    /// Downcasts to WideValue type (Value is NOT casted to WideValue)
+    fn to_wide_value(self) -> Result<WideValue, VMError>;
+
+    /// Downcasts to Contract type
+    fn to_contract(self) -> Result<Self::ContractType, VMError>;
 }
 
 /// A trait for the "data" items on the stack.
 /// Prover impls that trait for concrete structures: commitments, predicates etc,
 /// while the verifier uses a simple byteslice for all of these things.
 pub trait DataTrait: Clone {
+    // TODO: methods to convert to points, predicates, pubkeys etc
+}
+
+/// A trait for the contract type.
+/// The verifier implements `Contract` with simple data types and a predicate as a compressed point,
+/// while the prover has rich data structures in place of data and a whole predicate tree.
+pub trait ContractTrait {
+    // TODO: we may be forced to add associated types for data type here eventually
 }
 
 #[derive(Debug)]
@@ -42,8 +63,8 @@ pub enum Item<'tx> {
 }
 
 #[derive(Debug)]
-pub enum PortableItem<'tx> {
-    Data(Data<'tx>),
+pub enum PortableItem<D:DataTrait> {
+    Data(D),
     Value(Value),
 }
 
@@ -54,7 +75,7 @@ pub struct Data<'tx> {
 
 #[derive(Debug)]
 pub struct Contract<'tx> {
-    pub(crate) payload: Vec<PortableItem<'tx>>,
+    pub(crate) payload: Vec<PortableItem<Data<'tx>>>,
     pub(crate) predicate: Predicate,
 }
 
@@ -85,12 +106,44 @@ pub struct Constraint {
     // TBD
 }
 
+impl<'tx> DataTrait for Data<'tx> {
+
+}
+
 impl<'tx> ItemTrait for Item<'tx>{
+    type DataType = Data<'tx>;
+    type ContractType = Contract<'tx>;
+
     // Downcasts to Data type
     fn to_data(self) -> Result<Data<'tx>, VMError> {
         match self {
             Item::Data(x) => Ok(x),
             _ => Err(VMError::TypeNotData),
+        }
+    }
+
+    // Downcasts to a portable type
+    fn to_portable(self) -> Result<PortableItem<Self::DataType>, VMError> {
+        match self {
+            Item::Data(x) => Ok(PortableItem::Data(x)),
+            Item::Value(x) => Ok(PortableItem::Value(x)),
+            _ => Err(VMError::TypeNotPortable),
+        }
+    }
+
+    // Downcasts to Variable type
+    fn to_variable(self) -> Result<Variable, VMError> {
+        match self {
+            Item::Variable(v) => Ok(v),
+            _ => Err(VMError::TypeNotVariable),
+        }
+    }
+
+    // Downcasts to Expression type (Variable is NOT casted to Expression)
+    fn to_expression(self) -> Result<Expression, VMError> {
+        match self {
+            Item::Expression(expr) => Ok(expr),
+            _ => Err(VMError::TypeNotExpression),
         }
     }
 
@@ -101,36 +154,10 @@ impl<'tx> ItemTrait for Item<'tx>{
             _ => Err(VMError::TypeNotValue),
         }
     }
-}
 
-impl<'tx> Item<'tx> {
-    // Downcasts to a portable type
-    pub fn to_portable(self) -> Result<PortableItem<'tx>, VMError> {
-        match self {
-            Item::Data(x) => Ok(PortableItem::Data(x)),
-            Item::Value(x) => Ok(PortableItem::Value(x)),
-            _ => Err(VMError::TypeNotPortable),
-        }
-    }
-
-    // Downcasts to Variable type
-    pub fn to_variable(self) -> Result<Variable, VMError> {
-        match self {
-            Item::Variable(v) => Ok(v),
-            _ => Err(VMError::TypeNotVariable),
-        }
-    }
-
-    // Downcasts to Expression type (Variable is NOT casted to Expression)
-    pub fn to_expression(self) -> Result<Expression, VMError> {
-        match self {
-            Item::Expression(expr) => Ok(expr),
-            _ => Err(VMError::TypeNotExpression),
-        }
-    }
 
     // Downcasts to WideValue type (Value is NOT casted to WideValue)
-    pub fn to_wide_value(self) -> Result<WideValue, VMError> {
+    fn to_wide_value(self) -> Result<WideValue, VMError> {
         match self {
             Item::WideValue(w) => Ok(w),
             _ => Err(VMError::TypeNotWideValue),
@@ -138,7 +165,7 @@ impl<'tx> Item<'tx> {
     }
 
     // Downcasts to Contract type
-    pub fn to_contract(self) -> Result<Contract<'tx>, VMError> {
+    fn to_contract(self) -> Result<Contract<'tx>, VMError> {
         match self {
             Item::Contract(c) => Ok(c),
             _ => Err(VMError::TypeNotContract),
@@ -227,9 +254,13 @@ impl<'tx> From<Constraint> for Item<'tx> {
 }
 
 // Upcast a portable item to any item
-impl<'tx> From<PortableItem<'tx>> for Item<'tx> {
-    fn from(portable: PortableItem<'tx>) -> Self {
-        match portable {
+impl<D, I> Into<I> for PortableItem<D>
+where 
+D: DataTrait, 
+I: ItemTrait<DataType=D>,
+{
+    fn into(self) -> I {
+        match self {
             PortableItem::Data(x) => Item::Data(x),
             PortableItem::Value(x) => Item::Value(x),
         }

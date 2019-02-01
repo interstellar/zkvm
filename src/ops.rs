@@ -134,7 +134,8 @@ impl<T: DataTrait> Instruction<T> {
                     return None;
                 }
                 let strlen = LittleEndian::read_u32(immdata) as usize;
-                Some((Instruction::Push(strlen), 1 + 4 + strlen))
+                let bytes = &immdata[4..4+strlen];
+                Some((Instruction::Push(Data {bytes}), 1 + 4 + strlen))
             }
             Opcode::Drop => Some((Instruction::Drop, 1)),
             Opcode::Dup => {
