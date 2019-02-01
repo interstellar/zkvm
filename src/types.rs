@@ -31,7 +31,7 @@ pub enum PortableItem<'tx> {
 #[derive(Debug)]
 pub enum Data<'tx> {
     Opaque(&'tx [u8]),
-    Witness(DataWitness<'tx>)
+    Witness(Box<DataWitness<'tx>>)
 }
 
 /// Prover's representation of the witness.
@@ -73,8 +73,6 @@ pub struct Variable {
 pub struct Expression {
     /// Terms of the expression
     pub(crate) terms: Vec<(r1cs::Variable, Scalar)>,
-    /// Secret evaluation of the expression
-    pub(crate) witness: Option<Scalar>
 }
 
 #[derive(Clone, Debug)]
@@ -91,7 +89,7 @@ pub enum Constraint {
 pub enum PredicateWitness<'tx> {
     Key(Scalar),
     Program(Vec<Instruction<'tx>>),
-    Or(Predicate,Predicate),
+    Or(Box<(PredicateWitness<'tx>, PredicateWitness<'tx>)>),
 }
 
 /// Prover's representation of the commitment secret: witness and blinding factor
