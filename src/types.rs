@@ -1,5 +1,6 @@
 //! Core ZkVM stack types: data, variables, values, contracts etc.
 
+use core::ops::Range;
 use crate::transcript::TranscriptProtocol;
 use bulletproofs::r1cs;
 use curve25519_dalek::ristretto::CompressedRistretto;
