@@ -2,69 +2,62 @@
 //! All methods err using VMError::FormatError for convenience.
 
 use byteorder::{ByteOrder, LittleEndian};
+use core::ops::Range;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 
 use crate::errors::VMError;
 
-/// Reads a byte and returns the subsequent slice
-pub fn read_u8<'a>(slice: &'a [u8]) -> Result<(u8, &'a [u8]), VMError> {
-    if slice.len() < 1 {
-        return Err(VMError::FormatError);
-    }
-    Ok((slice[0], &slice[1..]))
+pub struct SliceView<'a,T> {
+    whole: &'a [T],
+    range: Range<usize>
 }
 
-/// Reads the LE32-encoded integer and returns the subsequent slice
-pub fn read_u32<'a>(slice: &'a [u8]) -> Result<(u32, &'a [u8]), VMError> {
-    if slice.len() < 4 {
-        return Err(VMError::FormatError);
+impl<'a, T> SliceView<'a,T> {
+    // get returns the slice from the given range, advancing the
+    // internal range
+    fn get(mut self, offset: usize) -> Result<&'a [T], VMError> {
+        let result = self.whole.get(self.range.start..self.range.start+offset).ok_or(VMError::FormatError);
+        self.range.start = self.range.start+offset;
+        result
     }
-    let x = LittleEndian::read_u32(slice);
-    Ok((x, &slice[4..]))
 }
 
-/// Reads the LE32-encoded integer as `usize` and returns the subsequent slice
-pub fn read_usize<'a>(slice: &'a [u8]) -> Result<(usize, &'a [u8]), VMError> {
-    let (n, rest) = read_u32(slice)?;
-    Ok((n as usize, rest))
+pub fn read_next_u8<'a>(slice: &mut SliceView<'a, u8>) -> Result<u8, VMError> {
+        let bytes = slice.get(1)?;
+        Ok(bytes[0])
+    }
+
+pub fn read_next_u32<'a>(slice: &mut SliceView<'a, u8>) -> Result<u32, VMError> {
+    let bytes = slice.get(4)?;
+    let x = LittleEndian::read_u32(bytes);
+    Ok(x)
 }
 
-// TODO: have read_u8x32 return the range (rather than the slice)
+pub fn read_next_usize<'a>(slice: &mut SliceView<'a, u8>) -> Result<usize, VMError> {
+    let n = read_next_u32(slice)?;
+    Ok(n as usize)
+}
 
-/// Reads a 32-byte array and returns the subsequent slice
-pub fn read_u8x32<'a>(slice: &'a [u8]) -> Result<([u8; 32], &'a [u8]), VMError> {
-    if slice.len() < 32 {
-        return Err(VMError::FormatError);
-    }
+pub fn read_next_u8x32<'a>(slice: &mut SliceView<'a, u8>) -> Result<[u8; 32], VMError> {
     let mut buf = [0u8; 32];
-    let (a, rest) = slice.split_at(32);
-    buf[..].copy_from_slice(a);
-    Ok((buf, rest))
+    let bytes = slice.get(32)?;
+    buf[..].copy_from_slice(bytes);
+    Ok(buf)
 }
 
-/// Reads a N-byte slice and returns the subsequent slice
-pub fn read_bytes<'a>(n: usize, slice: &'a [u8]) -> Result<(&'a [u8], &'a [u8]), VMError> {
-    if slice.len() < n {
-        return Err(VMError::FormatError);
-    }
-    Ok(slice.split_at(n))
+pub fn read_next_bytes<'a>(slice: &mut SliceView<'a, u8>, n: usize) -> Result<&'a [u8], VMError> {
+    Ok(slice.get(n)?)
 }
 
-/// Reads the Compressed Ristretto point (32-byte string) w/o attempting to decode it.
-pub fn read_point<'a>(slice: &'a [u8]) -> Result<(CompressedRistretto, &'a [u8]), VMError> {
-    let (buf, rest) = read_u8x32(slice)?;
-    Ok((CompressedRistretto(buf), rest))
+pub fn read_next_point<'a>(slice: &mut SliceView<'a, u8>) -> Result<CompressedRistretto, VMError> {
+    let buf = read_next_u8x32(slice)?;
+    Ok(CompressedRistretto(buf))
 }
 
-/// Reads the Scalar (encoded as 32-byte little-endian integer)
-/// and checks if it is canonically encoded (`x == x mod |G|`).
-pub fn read_scalar<'a>(slice: &'a [u8]) -> Result<(Scalar, &'a [u8]), VMError> {
-    let (buf, rest) = read_u8x32(slice)?;
-    Ok((
-        Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)?,
-        rest,
-    ))
+pub fn read_next_scalar<'a>(slice: &mut SliceView<'a, u8>) -> Result<Scalar, VMError> {
+    let buf = read_next_u8x32(slice)?;
+    Ok(Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)?)
 }
 
 // Writing API
