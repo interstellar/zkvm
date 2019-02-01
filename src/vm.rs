@@ -85,9 +85,9 @@ pub struct State<CS: r1cs::ConstraintSystem> {
 
     current_run: Run,
     run_stack: Vec<Run>,
-    txlog: Vec<Entry>,
-    variable_commitments: Vec<VariableCommitment>,
-    cs: CS,
+    pub txlog: Vec<Entry>,
+    pub variable_commitments: Vec<VariableCommitment>,
+    pub cs: CS,
 }
 
 /// An state of running a single program string.
@@ -105,17 +105,17 @@ enum Run {
 /// Variable types store index of such commitments that allows replacing them.
 pub struct VariableCommitment {
     /// Pedersen commitment to a variable
-    commitment: CompressedRistretto,
+    pub commitment: CompressedRistretto,
 
     /// Attached/detached state
     /// None if the variable is not attached to the CS yet,
     /// so its commitment is replaceable via `reblind`.
     /// Some if variable is attached to the CS yet and has an index in CS,
     /// so its commitment is no longer replaceable via `reblind`.
-    variable: Option<r1cs::Variable>,
+    pub variable: Option<r1cs::Variable>,
 
     /// Witness value and its blinding factor for the commitment
-    witness: Option<CommitmentWitness>,
+    pub witness: Option<CommitmentWitness>,
 }
 
 /// `VM` is a common trait for verifier's and prover's instances of ZkVM
@@ -126,6 +126,10 @@ pub trait VM {
 
     /// Returns the reference to the state object
     fn state(&mut self) -> &mut State<Self::CS>;
+    /// Issue instruction
+    fn issue(&mut self) -> Result<(), VMError>;
+
+    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
 }
 
 impl<CS: r1cs::ConstraintSystem> State<CS> {
@@ -136,7 +140,7 @@ impl<CS: r1cs::ConstraintSystem> State<CS> {
         maxtime: u64,
         program_range: Range<usize>,
         cs: CS
-    ) {
+    ) -> Self {
         State{
             mintime,
             maxtime,
@@ -300,38 +304,7 @@ pub trait VMInternal: VM {
         Ok(())
     }
 
-    fn issue(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let predicate = Predicate(state.pop_item()?.to_data()?.to_point()?);
-        let flv = state.pop_item()?.to_variable()?;
-        let qty = state.pop_item()?.to_variable()?;
-
-        let (flv_point, _) = self.attach_variable(flv);
-        let (qty_point, _) = self.attach_variable(qty);
-
-        let value = Value { qty, flv };
-
-        let flv_scalar = Value::issue_flavor(&predicate);
-        // flv_point == flavor·B    ->   0 == -flv_point + flv_scalar·B
-        self.deferred_operations.push(PointOp {
-            primary: Some(flv_scalar),
-            secondary: None,
-            arbitrary: vec![(-Scalar::one(), flv_point)],
-        });
-
-        let qty_expr = self.variable_to_expression(qty);
-        self.add_range_proof(64, qty_expr)?;
-
-        self.txlog.push(Entry::Issue(qty_point, flv_point));
-
-        let contract = Contract {
-            predicate,
-            payload: vec![PortableItem::Value(value)],
-        };
-
-        self.push_item(contract);
-        Ok(())
-    }
+    
 
     fn retire(&mut self) -> Result<(), VMError> {
         let state = self.state();
@@ -490,6 +463,26 @@ pub trait VMInternal: VM {
      fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
         unimplemented!();
     }
+
+    // Utility functions
+    fn variable_to_expression(&mut self, var: Variable) -> Expression {
+        let (_, r1cs_var) = self.attach_variable(var);
+        Expression {
+            terms: vec![(r1cs_var, Scalar::one())],
+        }
+    }
+
+    fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
+        let state = self.state();
+        spacesuit::range_proof(
+            &mut state.cs,
+            r1cs::LinearCombination::from_iter(expr.terms),
+            // TBD: maintain the assignment for the expression and provide it here
+            None,
+            bitrange,
+        )
+        .map_err(|_| VMError::R1CSInconsistency)
+    }
 }
 
 impl<T: VM> VMInternal for T {}
@@ -497,25 +490,25 @@ impl<T: VM> VMInternal for T {}
 
 impl<CS: r1cs::ConstraintSystem> State<CS> {
 
-    fn push_item<T>(&mut self, item: T)
+    pub fn push_item<T>(&mut self, item: T)
     where
         T: Into<Item>,
     {
         self.stack.push(item.into())
     }
 
-    fn pop_item(&mut self) -> Result<Item, VMError> {
+    pub fn pop_item(&mut self) -> Result<Item, VMError> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
 
-    fn make_variable(&mut self, commitment: Data) -> Result<Variable, VMError> {
-        let index = self.variable_commitments.len();
+    // fn make_variable(&mut self, commitment: Data) -> Result<Variable, VMError> {
+    //     let index = self.variable_commitments.len();
 
-        // TBD: if data has witness, coerce to commitment witness.
-        self.variable_commitments
-            .push(VariableCommitment::Detached(commitment.into()));
-        Variable { index }
-    }
+    //     // TBD: if data has witness, coerce to commitment witness.
+    //     self.variable_commitments
+    //         .push(VariableCommitment::Detached(commitment.into()));
+    //     Variable { index }
+    // }
 }
 
 

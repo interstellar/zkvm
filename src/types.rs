@@ -162,6 +162,37 @@ impl Item{
 }
 
 impl Data {
+
+
+        // /// Converts a bytestring to a 32-byte array
+    // pub fn to_u8x32(self) -> Result<[u8; 32], VMError> {
+    //     let mut buf = [0u8; 32];
+    //     buf.copy_from_slice(self.ensure_length(32)?.bytes);
+    //     Ok(buf)
+    // }
+
+    // /// Converts a bytestring to a compressed point
+    // pub fn to_point(self) -> Result<CompressedRistretto, VMError> {
+    //     Ok(CompressedRistretto(self.to_u8x32()?))
+    // }
+
+    pub fn to_u8x32(self, program: &[u8]) ->Result<[u8; 32], VMError> {
+        let mut buf = [0u8; 32];
+        let range = self.ensure_length(32)?;
+        let prog_slice = program.get(range).ok_or(VMError::FormatError)?;
+        buf.copy_from_slice(prog_slice);
+        Ok(buf)
+    }
+
+    pub fn to_point(self, program: &[u8]) -> Result<CompressedRistretto, VMError> {
+        let point = match self {
+            Data::Opaque(_) => CompressedRistretto(self.to_u8x32(program)?),
+            // TODO(vniu): implement to_point for prover
+            Data::Witness(_) => return Err(VMError::DataNotOpaque),
+        };
+        Ok(point)
+    }
+
     /// Ensures the length of the data string
     pub fn ensure_length(self, len: usize) -> Result<Range<usize>, VMError> {
         let range = match self {
