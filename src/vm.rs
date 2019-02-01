@@ -86,7 +86,6 @@ pub struct State<CS: r1cs::ConstraintSystem> {
     current_run: Run,
     run_stack: Vec<Run>,
     txlog: Vec<Entry>,
-    signtx_keys: Vec<Predicate>,
     variable_commitments: Vec<VariableCommitment>,
     cs: CS,
 }
@@ -122,14 +121,42 @@ pub struct VariableCommitment {
 /// `VM` is a common trait for verifier's and prover's instances of ZkVM
 /// that implements instructions generically.
 pub trait VM {
+    /// Concrete type implementing CS API: r1cs::Verifier or r1cs::Prover
     type CS: r1cs::ConstraintSystem;
 
-    fn state(&mut self) -> &mut State<Self::CS> {
-        unimplemented!()
+    /// Returns the reference to the state object
+    fn state(&mut self) -> &mut State<Self::CS>;
+}
+
+impl<CS: r1cs::ConstraintSystem> State<CS> {
+
+    pub fn new(
+        version: u64,
+        mintime: u64,
+        maxtime: u64,
+        program_range: Range<usize>,
+        cs: CS
+    ) {
+        State{
+            mintime,
+            maxtime,
+            extension: version > CURRENT_VERSION,
+            unique: false,
+            stack: Vec::new(),
+            current_run: Run::Program(program_range),
+            run_stack: Vec::new(),
+            txlog: vec![Entry::Header(version, mintime, maxtime)],
+            variable_commitments: Vec::new(),
+            cs,
+        }
     }
+}
+
+/// Internal implementation of VM common to both prover and verifier
+pub trait VMInternal: VM {
 
     /// Runs through the entire program and nested programs until completion.
-    fn run(&mut self) -> Result<(), VMError> {
+    fn run(&mut self) -> Result<TxID, VMError> {
         loop {
             if !self.step()? {
                 break;
@@ -144,7 +171,9 @@ pub trait VM {
             return Err(VMError::NotUniqueTxid);
         }
 
-        Ok(())
+        let txid = TxID::from_log(&self.state().txlog[..]);
+        
+        Ok(txid)
     }
 
     fn finish_run(&self) -> bool {
@@ -462,6 +491,9 @@ pub trait VM {
         unimplemented!();
     }
 }
+
+impl<T: VM> VMInternal for T {}
+
 
 impl<CS: r1cs::ConstraintSystem> State<CS> {
 
