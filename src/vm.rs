@@ -1,3 +1,4 @@
+use std::collections::vec_deque::VecDeque;
 use bulletproofs::r1cs;
 use bulletproofs::r1cs::R1CSProof;
 use bulletproofs::{BulletproofGens, PedersenGens};
@@ -94,7 +95,7 @@ pub struct State<'tx, CS: r1cs::ConstraintSystem> {
 /// The slices begin at the next instruction to be processed.
 enum Run<'tx> {
     /// Prover's running program
-    ProgramWitness(&'tx [Instruction<'tx>]),
+    ProgramWitness(VecDeque<Instruction<'tx>>),
 
     /// Verifier's running program
     Program(&'tx [u8])
@@ -164,7 +165,7 @@ pub trait VM<'tx> {
             match instr {
                 // the data is just a slice, so the clone would copy the slice struct,
                 // not the actual buffer of bytes.
-                Instruction::Push(data) => self.pushdata(data.clone())?,
+                Instruction::Push(data) => self.pushdata(data)?,
                 Instruction::Drop => self.drop()?,
                 Instruction::Dup(i) => self.dup(i)?,
                 Instruction::Roll(i) => self.roll(i)?,
@@ -475,8 +476,10 @@ impl<'tx, CS: r1cs::ConstraintSystem> State<'tx, CS> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
 
-    fn make_variable(&mut self, commitment: Data<'tx>) -> Variable {
+    fn make_variable(&mut self, commitment: Data<'tx>) -> Result<Variable, VMError> {
         let index = self.variable_commitments.len();
+
+        // TBD: if data has witness, coerce to commitment witness.
         self.variable_commitments
             .push(VariableCommitment::Detached(commitment.into()));
         Variable { index }

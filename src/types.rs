@@ -28,15 +28,14 @@ pub enum PortableItem<'tx> {
     Value(Value),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Data<'tx> {
     Opaque(&'tx [u8]),
     Witness(DataWitness<'tx>)
 }
 
 /// Prover's representation of the witness.
-/// Clone is allowed in the prover because it's their private computation.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum DataWitness<'tx> {
     Program(Vec<Instruction<'tx>>),
     Predicate(PredicateWitness<'tx>), // maybe having Predicate and one more indirection would be cleaner - lets see how it plays out
@@ -89,7 +88,7 @@ pub enum Constraint {
 }
 
 /// Prover's representation of the predicate tree with all the secrets
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum PredicateWitness<'tx> {
     Key(Scalar),
     Program(Vec<Instruction<'tx>>),
@@ -97,7 +96,7 @@ pub enum PredicateWitness<'tx> {
 }
 
 /// Prover's representation of the commitment secret: witness and blinding factor
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct CommitmentWitness {
     value: Scalar,
     blinding: Scalar,
