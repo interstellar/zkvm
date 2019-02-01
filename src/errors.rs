@@ -78,4 +78,11 @@ pub enum VMError {
     /// This error occurs when R1CS gadget reports and error due to inconsistent input
     #[fail(display = "R1CS detected inconsistent input")]
     R1CSInconsistency,
+
+
+    #[fail(display = "Item misses witness data.")]
+    WitnessMissing,
+
+    #[fail(display = "Data item must be opaque")]
+    DataNotOpaque,
 }

@@ -7,13 +7,14 @@ use crate::types::*;
 
 use crate::vm::{VM,State,VariableCommitment};
 
-pub struct Verifier<'tx, 'transcript, 'gens> {
-    state: State<'tx, r1cs::Verifier<'transcript, 'gens>>,
+pub struct Verifier<'t, 'g> {
+    txprogram: Vec<u8>,
+    state: State<r1cs::Verifier<'t, 'g>>,
     deferred_operations: Vec<PointOp>,
 }
 
-impl<'tx, 'transcript, 'gens> VM<'tx> for Verifier<'tx, 'transcript, 'gens> {
-    type CS = r1cs::Verifier<'transcript, 'gens>;
+impl<'t, 'g> VM for Verifier<'t, 'g> {
+    type CS = r1cs::Verifier<'t, 'g>;
 
 
     // Unimplemented functions

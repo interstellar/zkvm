@@ -12,9 +12,9 @@ use crate::errors::VMError;
 use crate::predicate::Predicate;
 
 #[derive(Debug)]
-pub enum Item<'tx> {
-    Data(Data<'tx>),
-    Contract(Contract<'tx>),
+pub enum Item {
+    Data(Data),
+    Contract(Contract),
     Value(Value),
     WideValue(WideValue),
     Variable(Variable),
@@ -23,30 +23,30 @@ pub enum Item<'tx> {
 }
 
 #[derive(Debug)]
-pub enum PortableItem<'tx> {
-    Data(Data<'tx>),
+pub enum PortableItem {
+    Data(Data),
     Value(Value),
 }
 
 #[derive(Debug)]
-pub enum Data<'tx> {
-    Opaque(&'tx [u8]),
-    Witness(Box<DataWitness<'tx>>)
+pub enum Data {
+    Opaque(Range<usize>),
+    Witness(Box<DataWitness>)
 }
 
 /// Prover's representation of the witness.
 #[derive(Debug)]
-pub enum DataWitness<'tx> {
-    Program(Vec<Instruction<'tx>>),
-    Predicate(PredicateWitness<'tx>), // maybe having Predicate and one more indirection would be cleaner - lets see how it plays out
+pub enum DataWitness {
+    Program(Vec<Instruction>),
+    Predicate(PredicateWitness), // maybe having Predicate and one more indirection would be cleaner - lets see how it plays out
     Commitment(CommitmentWitness),
     Scalar(Scalar),
-    Input(Contract<'tx>, UTXO),
+    Input(Contract, UTXO),
 }
 
 #[derive(Debug)]
-pub struct Contract<'tx> {
-    pub(crate) payload: Vec<PortableItem<'tx>>,
+pub struct Contract {
+    pub(crate) payload: Vec<PortableItem>,
     pub(crate) predicate: Predicate,
 }
 
@@ -86,10 +86,10 @@ pub enum Constraint {
 
 /// Prover's representation of the predicate tree with all the secrets
 #[derive(Debug)]
-pub enum PredicateWitness<'tx> {
+pub enum PredicateWitness {
     Key(Scalar),
-    Program(Vec<Instruction<'tx>>),
-    Or(Box<(PredicateWitness<'tx>, PredicateWitness<'tx>)>),
+    Program(Vec<Instruction>),
+    Or(Box<(PredicateWitness, PredicateWitness)>),
 }
 
 /// Prover's representation of the commitment secret: witness and blinding factor
@@ -99,10 +99,10 @@ pub struct CommitmentWitness {
     blinding: Scalar,
 }
 
-impl<'tx>  Item<'tx>{
+impl Item{
  
     // Downcasts to Data type
-    pub fn to_data(self) -> Result<Data<'tx>, VMError> {
+    pub fn to_data(self) -> Result<Data, VMError> {
         match self {
             Item::Data(x) => Ok(x),
             _ => Err(VMError::TypeNotData),
@@ -110,7 +110,7 @@ impl<'tx>  Item<'tx>{
     }
 
     // Downcasts to a portable type
-    pub fn to_portable(self) -> Result<PortableItem<'tx>, VMError> {
+    pub fn to_portable(self) -> Result<PortableItem, VMError> {
         match self {
             Item::Data(x) => Ok(PortableItem::Data(x)),
             Item::Value(x) => Ok(PortableItem::Value(x)),
@@ -152,7 +152,7 @@ impl<'tx>  Item<'tx>{
     }
 
     // Downcasts to Contract type
-    pub fn to_contract(self) -> Result<Contract<'tx>, VMError> {
+    pub fn to_contract(self) -> Result<Contract, VMError> {
         match self {
             Item::Contract(c) => Ok(c),
             _ => Err(VMError::TypeNotContract),
@@ -160,31 +160,35 @@ impl<'tx>  Item<'tx>{
     }
 }
 
-impl<'tx> Data<'tx> {
+impl Data {
     /// Ensures the length of the data string
-    pub fn ensure_length(self, len: usize) -> Result<Data<'tx>, VMError> {
-        if self.bytes.len() != len {
+    pub fn ensure_length(self, len: usize) -> Result<Range<usize>, VMError> {
+        let range = match self {
+            Data::Opaque(range) => range,
+            Data::Witness(_) => return Err(VMError::DataNotOpaque)
+        };
+        if range.len() != len {
             return Err(VMError::FormatError);
         }
-        Ok(self)
+        Ok(range)
     }
 
-    /// Converts a bytestring to a 32-byte array
-    pub fn to_u8x32(self) -> Result<[u8; 32], VMError> {
-        let mut buf = [0u8; 32];
-        buf.copy_from_slice(self.ensure_length(32)?.bytes);
-        Ok(buf)
-    }
+    // /// Converts a bytestring to a 32-byte array
+    // pub fn to_u8x32(self) -> Result<[u8; 32], VMError> {
+    //     let mut buf = [0u8; 32];
+    //     buf.copy_from_slice(self.ensure_length(32)?.bytes);
+    //     Ok(buf)
+    // }
 
-    /// Converts a bytestring to a compressed point
-    pub fn to_point(self) -> Result<CompressedRistretto, VMError> {
-        Ok(CompressedRistretto(self.to_u8x32()?))
-    }
+    // /// Converts a bytestring to a compressed point
+    // pub fn to_point(self) -> Result<CompressedRistretto, VMError> {
+    //     Ok(CompressedRistretto(self.to_u8x32()?))
+    // }
 
-    /// Converts a bytestring to a canonical scalar
-    pub fn to_scalar(self) -> Result<Scalar, VMError> {
-        Scalar::from_canonical_bytes(self.to_u8x32()?).ok_or(VMError::FormatError)
-    }
+    // /// Converts a bytestring to a canonical scalar
+    // pub fn to_scalar(self) -> Result<Scalar, VMError> {
+    //     Scalar::from_canonical_bytes(self.to_u8x32()?).ok_or(VMError::FormatError)
+    // }
 }
 
 impl Value {
@@ -198,51 +202,51 @@ impl Value {
 
 // Upcasting all types to Item
 
-impl<'tx> From<Data<'tx>> for Item<'tx> {
-    fn from(x: Data<'tx>) -> Self {
+impl From<Data> for Item {
+    fn from(x: Data) -> Self {
         Item::Data(x)
     }
 }
 
-impl<'tx> From<Value> for Item<'tx> {
+impl From<Value> for Item {
     fn from(x: Value) -> Self {
         Item::Value(x)
     }
 }
 
-impl<'tx> From<WideValue> for Item<'tx> {
+impl From<WideValue> for Item {
     fn from(x: WideValue) -> Self {
         Item::WideValue(x)
     }
 }
 
-impl<'tx> From<Contract<'tx>> for Item<'tx> {
-    fn from(x: Contract<'tx>) -> Self {
+impl From<Contract> for Item {
+    fn from(x: Contract) -> Self {
         Item::Contract(x)
     }
 }
 
-impl<'tx> From<Variable> for Item<'tx> {
+impl From<Variable> for Item {
     fn from(x: Variable) -> Self {
         Item::Variable(x)
     }
 }
 
-impl<'tx> From<Expression> for Item<'tx> {
+impl From<Expression> for Item {
     fn from(x: Expression) -> Self {
         Item::Expression(x)
     }
 }
 
-impl<'tx> From<Constraint> for Item<'tx> {
+impl From<Constraint> for Item {
     fn from(x: Constraint) -> Self {
         Item::Constraint(x)
     }
 }
 
 // Upcast a portable item to any item
-impl<'tx> From<PortableItem<'tx>> for Item<'tx> {
-    fn from(portable: PortableItem<'tx>) -> Self {
+impl From<PortableItem> for Item {
+    fn from(portable: PortableItem) -> Self {
         match portable {
             PortableItem::Data(x) => Item::Data(x),
             PortableItem::Value(x) => Item::Value(x),

@@ -1,3 +1,4 @@
+use core::ops::Range;
 use std::collections::vec_deque::VecDeque;
 use bulletproofs::r1cs;
 use bulletproofs::r1cs::R1CSProof;
@@ -67,7 +68,7 @@ pub struct VerifiedTx {
     pub log: Vec<Entry>,
 }
 
-pub struct State<'tx, CS: r1cs::ConstraintSystem> {
+pub struct State<CS: r1cs::ConstraintSystem> {
     mintime: u64,
     maxtime: u64,
 
@@ -80,10 +81,10 @@ pub struct State<'tx, CS: r1cs::ConstraintSystem> {
     unique: bool,
 
     // stack of all items in the VM
-    stack: Vec<Item<'tx>>,
+    stack: Vec<Item>,
 
-    current_run: Run<'tx>,
-    run_stack: Vec<Run<'tx>>,
+    current_run: Run,
+    run_stack: Vec<Run>,
     txlog: Vec<Entry>,
     signtx_keys: Vec<Predicate>,
     variable_commitments: Vec<VariableCommitment>,
@@ -93,12 +94,12 @@ pub struct State<'tx, CS: r1cs::ConstraintSystem> {
 /// An state of running a single program string.
 /// VM consists of a stack of such _Runs_.
 /// The slices begin at the next instruction to be processed.
-enum Run<'tx> {
+enum Run {
     /// Prover's running program
-    ProgramWitness(VecDeque<Instruction<'tx>>),
+    ProgramWitness(VecDeque<Instruction>),
 
-    /// Verifier's running program
-    Program(&'tx [u8])
+    /// Verifier's running program is a slice into a tx.program
+    Program(Range<usize>)
 }
 
 /// And indirect reference to a high-level variable within a constraint system.
@@ -120,10 +121,10 @@ pub struct VariableCommitment {
 
 /// `VM` is a common trait for verifier's and prover's instances of ZkVM
 /// that implements instructions generically.
-pub trait VM<'tx> {
+pub trait VM {
     type CS: r1cs::ConstraintSystem;
 
-    fn state(&mut self) -> &mut State<'tx, Self::CS> {
+    fn state(&mut self) -> &mut State<Self::CS> {
         unimplemented!()
     }
 
@@ -212,7 +213,7 @@ pub trait VM<'tx> {
         }
     }
 
-    fn pushdata(&mut self, data: Data<'tx>) -> Result<(), VMError> {
+    fn pushdata(&mut self, data: Data) -> Result<(), VMError> {
         self.state().push_item(data);
         Ok(())
     }
@@ -446,11 +447,10 @@ pub trait VM<'tx> {
 
     // Return the next instruction, if it exists, and advance the 
     // program state pointer.
-    fn next_instruction(&mut self) -> Option<Instruction<'tx>> {
+    fn next_instruction(&mut self) -> Option<Instruction> {
         // Maybe implemented by each type, or in the Run type? 
         // let (instr, instr_size) =
-        //     Instruction::parse(&self.state().current_run.program[self.state().current_run.offset..])
-        //         .ok_or(VMError::FormatError)?;
+        //     Instruction::parse(&txprogram, self.state().current_run.range)?;
 
         // // Immediately update the offset for the next instructions
         // self.state().current_run.offset += instr_size;
@@ -463,20 +463,20 @@ pub trait VM<'tx> {
     }
 }
 
-impl<'tx, CS: r1cs::ConstraintSystem> State<'tx, CS> {
+impl<CS: r1cs::ConstraintSystem> State<CS> {
 
     fn push_item<T>(&mut self, item: T)
     where
-        T: Into<Item<'tx>>,
+        T: Into<Item>,
     {
         self.stack.push(item.into())
     }
 
-    fn pop_item(&mut self) -> Result<Item<'tx>, VMError> {
+    fn pop_item(&mut self) -> Result<Item, VMError> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
 
-    fn make_variable(&mut self, commitment: Data<'tx>) -> Result<Variable, VMError> {
+    fn make_variable(&mut self, commitment: Data) -> Result<Variable, VMError> {
         let index = self.variable_commitments.len();
 
         // TBD: if data has witness, coerce to commitment witness.
@@ -492,7 +492,7 @@ impl<'tx, CS: r1cs::ConstraintSystem> State<'tx, CS> {
 
 /*
 
-impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
+impl<transcript, 'gens> VM<'transcript, 'gens> {
 
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
         // This subscript never fails because the variable is created only via `make_variable`.
@@ -524,7 +524,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
     }
 
-    fn item_to_wide_value(&mut self, item: Item<'tx>) -> Result<WideValue, VMError> {
+    fn item_to_wide_value(&mut self, item: Item) -> Result<WideValue, VMError> {
         match item {
             Item::Value(value) => Ok(WideValue {
                 r1cs_qty: self.attach_variable(value.qty).1,
@@ -535,7 +535,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         }
     }
 
-    fn item_to_expression(&mut self, item: Item<'tx>) -> Result<Expression, VMError> {
+    fn item_to_expression(&mut self, item: Item) -> Result<Expression, VMError> {
         match item {
             Item::Variable(v) => Ok(self.variable_to_expression(v)),
             Item::Expression(expr) => Ok(expr),
@@ -551,7 +551,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     }
 
     /// Parses the input and returns the instantiated contract, txid and UTXO identifier.
-    fn decode_input(&mut self, input: &'tx [u8]) -> Result<(Contract<'tx>, TxID, UTXO), VMError> {
+    fn decode_input(&mut self, input: &'tx [u8]) -> Result<(Contract, TxID, UTXO), VMError> {
         //        Input  =  PreviousTxID || PreviousOutput
         // PreviousTxID  =  <32 bytes>
 
@@ -563,7 +563,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     }
 
     /// Parses the output and returns an instantiated contract.
-    fn decode_output(&mut self, output: &'tx [u8]) -> Result<(Contract<'tx>), VMError> {
+    fn decode_output(&mut self, output: &'tx [u8]) -> Result<(Contract), VMError> {
         //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
         // Predicate  =  <32 bytes>
         //      Item  =  enum { Data, Value }
@@ -581,7 +581,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
             return Err(VMError::FormatError);
         }
 
-        let mut payload: Vec<PortableItem<'tx>> = Vec::with_capacity(k);
+        let mut payload: Vec<PortableItem> = Vec::with_capacity(k);
         for _ in 0..k {
             let (item_type, rest) = encoding::read_u8(items)?;
             let item = match item_type {
@@ -609,7 +609,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
         Ok(Contract { predicate, payload })
     }
 
-    fn encode_output(&mut self, contract: Contract<'tx>) -> Vec<u8> {
+    fn encode_output(&mut self, contract: Contract) -> Vec<u8> {
         let mut output = Vec::with_capacity(contract.output_size());
         encoding::write_point(&contract.predicate.0, &mut output);
         encoding::write_u32(contract.payload.len() as u32, &mut output);
@@ -646,7 +646,7 @@ impl<'tx, 'transcript, 'gens> VM<'tx, 'transcript, 'gens> {
     }
 }
 
-impl<'tx> Contract<'tx> {
+impl Contract {
     fn output_size(&self) -> usize {
         let mut size = 32 + 4;
         for item in self.payload.iter() {

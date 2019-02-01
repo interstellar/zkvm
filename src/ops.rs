@@ -1,11 +1,13 @@
+use core::ops::Range;
 use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
 use crate::types::Data;
+use crate::errors::VMError;
 
-#[derive(Clone, Debug)]
-pub enum Instruction<'tx> {
-    Push(Data<'tx>), // size of the string
+#[derive(Debug)]
+pub enum Instruction {
+    Push(Data), // size of the string
     Drop,
     Dup(usize),  // index of the item
     Roll(usize), // index of the item
@@ -105,24 +107,27 @@ impl Opcode {
     }
 }
 
-impl<'tx> Instruction<'tx> {
+impl Instruction {
     /// Returns a parsed instruction with a size that it occupies in the program string.
     /// E.g. a push instruction with 5-byte string occupies 1+4+5=10 bytes
     /// (4 for the LE32 length prefix).
     ///
-    /// Return `None` if there is not enough bytes to parse an instruction.
-    pub fn parse(program: &'tx [u8]) -> Option<(Self, usize)> {
-        if program.len() == 0 {
-            return None;
+    /// Return `VMError::FormatError` if there is not enough bytes to parse an instruction.
+    pub fn parse(txprogram: &[u8], range: Range<usize>) -> Result<(Self, usize), VMError> {
+        // nothing to parse from an empty slice
+        if range.len() == 0 {
+            return Err(VMError::FormatError);
         }
 
-        let byte = program[0];
-        let immdata = &program[1..];
+        // TBD: .get is a nightly-only :-(
+        let prog = txprogram.get(range).ok_or(VMError::FormatError)?;
+        let byte = prog[0];
+        let immdata = &prog[1..];
 
         // Interpret the opcode. Unknown opcodes are extension opcodes.
         let opcode = match Opcode::from_u8(byte) {
             None => {
-                return Some((Instruction::Ext(byte), 1));
+                return Ok((Instruction::Ext(byte), 1));
             }
             Some(op) => op,
         };
@@ -130,85 +135,89 @@ impl<'tx> Instruction<'tx> {
         match opcode {
             Opcode::Push => {
                 if immdata.len() < 4 {
-                    return None;
+                    return Err(VMError::FormatError);
                 }
                 let strlen = LittleEndian::read_u32(immdata) as usize;
-                let bytes = &immdata[4..4+strlen];
-                Some((Instruction::Push(Data::Opaque(bytes)), 1 + 4 + strlen))
+                let data_range = 4..4+strlen;
+                let global_range = Range {
+                    start: range.start + data_range.start,
+                    end: range.start + data_range.end
+                };
+                Ok((Instruction::Push(Data::Opaque(global_range)), 1 + 4 + strlen))
             }
-            Opcode::Drop => Some((Instruction::Drop, 1)),
+            Opcode::Drop => Ok((Instruction::Drop, 1)),
             Opcode::Dup => {
                 if immdata.len() < 4 {
-                    return None;
+                    return Err(VMError::FormatError);
                 }
                 let idx = LittleEndian::read_u32(immdata) as usize;
-                Some((Instruction::Dup(idx), 1 + 4))
+                Ok((Instruction::Dup(idx), 1 + 4))
             }
             Opcode::Roll => {
                 if immdata.len() < 4 {
-                    return None;
+                    return Err(VMError::FormatError);
                 }
                 let idx = LittleEndian::read_u32(immdata) as usize;
-                Some((Instruction::Roll(idx), 1 + 4))
+                Ok((Instruction::Roll(idx), 1 + 4))
             }
-            Opcode::Const => Some((Instruction::Const, 1)),
-            Opcode::Var => Some((Instruction::Var, 1)),
-            Opcode::Alloc => Some((Instruction::Alloc, 1)),
-            Opcode::Mintime => Some((Instruction::Mintime, 1)),
-            Opcode::Maxtime => Some((Instruction::Maxtime, 1)),
-            Opcode::Neg => Some((Instruction::Neg, 1)),
-            Opcode::Add => Some((Instruction::Add, 1)),
-            Opcode::Mul => Some((Instruction::Mul, 1)),
-            Opcode::Eq => Some((Instruction::Eq, 1)),
+            Opcode::Const => Ok((Instruction::Const, 1)),
+            Opcode::Var => Ok((Instruction::Var, 1)),
+            Opcode::Alloc => Ok((Instruction::Alloc, 1)),
+            Opcode::Mintime => Ok((Instruction::Mintime, 1)),
+            Opcode::Maxtime => Ok((Instruction::Maxtime, 1)),
+            Opcode::Neg => Ok((Instruction::Neg, 1)),
+            Opcode::Add => Ok((Instruction::Add, 1)),
+            Opcode::Mul => Ok((Instruction::Mul, 1)),
+            Opcode::Eq => Ok((Instruction::Eq, 1)),
             Opcode::Range => {
                 if immdata.len() < 1 {
-                    return None;
+                    return Err(VMError::FormatError);
                 }
-                Some((Instruction::Range(immdata[0]), 1 + 1))
+                Ok((Instruction::Range(immdata[0]), 1 + 1))
             }
-            Opcode::And => Some((Instruction::And, 1)),
-            Opcode::Or => Some((Instruction::Or, 1)),
-            Opcode::Verify => Some((Instruction::Verify, 1)),
-            Opcode::Blind => Some((Instruction::Blind, 1)),
-            Opcode::Reblind => Some((Instruction::Reblind, 1)),
-            Opcode::Unblind => Some((Instruction::Unblind, 1)),
-            Opcode::Issue => Some((Instruction::Issue, 1)),
-            Opcode::Borrow => Some((Instruction::Borrow, 1)),
-            Opcode::Retire => Some((Instruction::Retire, 1)),
-            Opcode::Qty => Some((Instruction::Qty, 1)),
-            Opcode::Flavor => Some((Instruction::Flavor, 1)),
+            Opcode::And => Ok((Instruction::And, 1)),
+            Opcode::Or => Ok((Instruction::Or, 1)),
+            Opcode::Verify => Ok((Instruction::Verify, 1)),
+            Opcode::Blind => Ok((Instruction::Blind, 1)),
+            Opcode::Reblind => Ok((Instruction::Reblind, 1)),
+            Opcode::Unblind => Ok((Instruction::Unblind, 1)),
+            Opcode::Issue => Ok((Instruction::Issue, 1)),
+            Opcode::Borrow => Ok((Instruction::Borrow, 1)),
+            Opcode::Retire => Ok((Instruction::Retire, 1)),
+            Opcode::Qty => Ok((Instruction::Qty, 1)),
+            Opcode::Flavor => Ok((Instruction::Flavor, 1)),
             Opcode::Cloak => {
                 if immdata.len() < 8 {
-                    return None;
+                    return Err(VMError::FormatError);
                 }
                 let m = LittleEndian::read_u32(immdata) as usize;
                 let n = LittleEndian::read_u32(&immdata[4..]) as usize;
-                Some((Instruction::Cloak(m, n), 1 + 8))
+                Ok((Instruction::Cloak(m, n), 1 + 8))
             }
-            Opcode::Import => Some((Instruction::Import, 1)),
-            Opcode::Export => Some((Instruction::Export, 1)),
-            Opcode::Input => Some((Instruction::Input, 1)),
+            Opcode::Import => Ok((Instruction::Import, 1)),
+            Opcode::Export => Ok((Instruction::Export, 1)),
+            Opcode::Input => Ok((Instruction::Input, 1)),
             Opcode::Output => {
                 if immdata.len() < 4 {
-                    return None;
+                    return Err(VMError::FormatError);
                 }
                 let k = LittleEndian::read_u32(immdata) as usize;
-                Some((Instruction::Output(k), 1 + 4))
+                Ok((Instruction::Output(k), 1 + 4))
             }
             Opcode::Contract => {
                 if immdata.len() < 4 {
-                    return None;
+                    return Err(VMError::FormatError);
                 }
                 let k = LittleEndian::read_u32(immdata) as usize;
-                Some((Instruction::Contract(k), 1 + 4))
+                Ok((Instruction::Contract(k), 1 + 4))
             }
-            Opcode::Nonce => Some((Instruction::Nonce, 1)),
-            Opcode::Log => Some((Instruction::Log, 1)),
-            Opcode::Signtx => Some((Instruction::Signtx, 1)),
-            Opcode::Call => Some((Instruction::Call, 1)),
-            Opcode::Left => Some((Instruction::Left, 1)),
-            Opcode::Right => Some((Instruction::Right, 1)),
-            Opcode::Delegate => Some((Instruction::Delegate, 1)),
+            Opcode::Nonce => Ok((Instruction::Nonce, 1)),
+            Opcode::Log => Ok((Instruction::Log, 1)),
+            Opcode::Signtx => Ok((Instruction::Signtx, 1)),
+            Opcode::Call => Ok((Instruction::Call, 1)),
+            Opcode::Left => Ok((Instruction::Left, 1)),
+            Opcode::Right => Ok((Instruction::Right, 1)),
+            Opcode::Delegate => Ok((Instruction::Delegate, 1)),
         }
     }
 }
