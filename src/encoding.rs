@@ -8,56 +8,61 @@ use curve25519_dalek::scalar::Scalar;
 
 use crate::errors::VMError;
 
-pub struct SliceView<'a,T> {
-    whole: &'a [T],
-    range: Range<usize>
+#[derive(Copy,Clone,Debug)]
+pub struct SliceView<'a> {
+    whole: &'a [u8],
+    index: usize,
 }
 
-impl<'a, T> SliceView<'a,T> {
-    // get returns the slice from the given range, advancing the
-    // internal range
-    fn get(mut self, offset: usize) -> Result<&'a [T], VMError> {
-        let result = self.whole.get(self.range.start..self.range.start+offset).ok_or(VMError::FormatError);
-        self.range.start = self.range.start+offset;
-        result
+impl<'a> SliceView<'a> {
+    // next advances the internal range and returns the 
+    // updated SliceView
+    fn next(self, offset: usize) -> Result<Self, VMError> {
+        self.index = self.index+offset;
+        Ok(self)
+    }
+
+    fn slice(self, offset: usize) -> Result<&'a [u8], VMError> {
+        self.whole.get(self.index..self.index+offset).ok_or(VMError::FormatError)
     }
 }
 
-pub fn read_next_u8<'a>(slice: &mut SliceView<'a, u8>) -> Result<u8, VMError> {
-        let bytes = slice.get(1)?;
-        Ok(bytes[0])
+pub fn read_next_u8<'a>(slice: SliceView<'a>) -> Result<(u8, SliceView<'a>), VMError> {
+        let bytes = slice.slice(1)?;
+        Ok((bytes[0], slice.next(1)?))
     }
 
-pub fn read_next_u32<'a>(slice: &mut SliceView<'a, u8>) -> Result<u32, VMError> {
-    let bytes = slice.get(4)?;
+pub fn read_next_u32<'a>(slice: SliceView<'a>) -> Result<(u32, SliceView<'a>), VMError> {
+    let bytes = slice.slice(4)?;
     let x = LittleEndian::read_u32(bytes);
-    Ok(x)
+    Ok((x, slice.next(4)?))
 }
 
-pub fn read_next_usize<'a>(slice: &mut SliceView<'a, u8>) -> Result<usize, VMError> {
-    let n = read_next_u32(slice)?;
-    Ok(n as usize)
+pub fn read_next_usize<'a>(slice: SliceView<'a>) -> Result<(usize, SliceView<'a>), VMError> {
+    let (n, next_slice) = read_next_u32(slice)?;
+    Ok((n as usize, next_slice))
 }
 
-pub fn read_next_u8x32<'a>(slice: &mut SliceView<'a, u8>) -> Result<[u8; 32], VMError> {
+pub fn read_next_u8x32<'a>(slice: SliceView<'a>) -> Result<([u8; 32], SliceView<'a>), VMError> {
     let mut buf = [0u8; 32];
-    let bytes = slice.get(32)?;
+    let bytes = slice.slice(32)?;
     buf[..].copy_from_slice(bytes);
-    Ok(buf)
+    Ok((buf, slice.next(32)?))
 }
 
-pub fn read_next_bytes<'a>(slice: &mut SliceView<'a, u8>, n: usize) -> Result<&'a [u8], VMError> {
-    Ok(slice.get(n)?)
+pub fn read_next_bytes<'a>(slice: SliceView<'a>, n: usize) -> Result<(&'a [u8], SliceView<'a>), VMError> {
+    let bytes = slice.slice(n)?;
+    Ok((bytes, slice.next(n)?))
 }
 
-pub fn read_next_point<'a>(slice: &mut SliceView<'a, u8>) -> Result<CompressedRistretto, VMError> {
-    let buf = read_next_u8x32(slice)?;
-    Ok(CompressedRistretto(buf))
+pub fn read_next_point<'a>(slice: SliceView<'a>) -> Result<(CompressedRistretto, SliceView<'a>), VMError> {
+    let (buf, next_slice) = read_next_u8x32(slice)?;
+    Ok((CompressedRistretto(buf), next_slice))
 }
 
-pub fn read_next_scalar<'a>(slice: &mut SliceView<'a, u8>) -> Result<Scalar, VMError> {
-    let buf = read_next_u8x32(slice)?;
-    Ok(Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)?)
+pub fn read_next_scalar<'a>(slice: SliceView<'a>) -> Result<(Scalar, SliceView<'a>), VMError> {
+    let (buf, next_slice) = read_next_u8x32(slice)?;
+    Ok((Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)?, next_slice))
 }
 
 // Writing API
