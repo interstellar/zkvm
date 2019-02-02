@@ -1669,7 +1669,7 @@ the second-from-the-top is not a [contract](#contract-type).
 
 _contract(P) L R_ **left** → _contract(L)_
 
-1. Pops the right [predicate](#predicate) `R`, then the left [predicate](#predicate) `L`.
+1. Pops the right [predicate](#predicate) `R`, then the left [predicate](#predicate) `L` and a [contract](#contract-type) `contract`.
 2. Reads the [predicate](#predicate) `P` from the contract.
 3. Forms a statement for [predicate disjunction](#predicate-disjunction) of `L` and `R` being equal to `P`:
     ```
@@ -1686,7 +1686,7 @@ or if the third from the top item is not a [contract](#contract-type).
 
 _contract(P) L R_ **right** → _contract(R)_
 
-1. Pops the right [predicate](#predicate) `R`, then the left [predicate](#predicate) `L`.
+1. Pops the right [predicate](#predicate) `R`, then the left [predicate](#predicate) `L` and a [contract](#contract-type) `contract`.
 2. Reads the [predicate](#predicate) `P` from the contract.
 3. Forms a statement of [predicate disjunction](#predicate-disjunction) of `L` and `R` being equal to `P`:
     ```
