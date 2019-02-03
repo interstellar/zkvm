@@ -1232,7 +1232,7 @@ This is different from [`var`](#var) in that the variable is not represented by 
 
 Pushes an [expression](#expression-type) `expr` corresponding to the [minimum time bound](#time-bounds) of the transaction.
 
-The one-term expression represents time bound as a weight on the R1CS constant `1` (see [`cost`](#const)).
+The one-term expression represents time bound as a weight on the R1CS constant `1` (see [`const`](#const)).
 
 #### maxtime
 
@@ -1240,7 +1240,7 @@ The one-term expression represents time bound as a weight on the R1CS constant `
 
 Pushes an [expression](#expression-type) `expr` corresponding to the [maximum time bound](#time-bounds) of the transaction.
 
-The one-term expression represents time bound as a weight on the R1CS constant `1` (see [`cost`](#const)).
+The one-term expression represents time bound as a weight on the R1CS constant `1` (see [`const`](#const)).
 
 #### neg
 
