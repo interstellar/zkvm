@@ -14,51 +14,48 @@ use crate::errors::VMError;
 use crate::encoding::* ;
 use crate::ops::Instruction;
 
-use crate::vm::{VM,VMInternal,Tx,VerifiedTx,Run,State,VariableCommitment};
-use crate::predicate::Predicate;
+use crate::vm::{VM,Tx,VerifiedTx,RunTrait,VariableCommitment};
 
-pub struct Verifier<'t, 'g> {
-    tx: Tx,
-    state: State<r1cs::Verifier<'t, 'g>>,
+pub struct Verifier {
     signtx_keys: Vec<VerificationKey>,
     deferred_operations: Vec<PointOp>,
 }
 
-impl<'t, 'g> Verifier<'t, 'g> {
+struct Run {
+    program: Vec<u8>,
+    offset: usize,
+}
 
-    /// Instantiate a verifying VM
-    pub fn new(tx: Tx, bp_gens: &'g BulletproofGens) -> Self {
-        
+
+impl Verifier {
+
+    pub fn verify_tx(tx: Tx, bp_gens: &'g BulletproofGens) -> Result<VerifiedTx, VMError> {
+
         let mut r1cs_transcript = Transcript::new(b"ZkVM.r1cs");
         let pc_gens = PedersenGens::default();
         let cs = r1cs::Verifier::new(bp_gens, &pc_gens, &mut r1cs_transcript);
 
-        Verifier {
-            tx,
-            state: State::new(
-                tx.version,
-                tx.mintime,
-                tx.maxtime,
-                0..tx.program.len(),
-                cs,
-            ),
+        let mut verifier = Verifier {
             signtx_keys: Vec::new(),
             deferred_operations: Vec::new(),
-        }
-    }
+        };
 
-    pub fn verify_tx(self) -> Result<VerifiedTx, VMError> {
+        let mut vm = VM::new(
+            tx.version,
+            tx.mintime,
+            tx.maxtime,
+            Run::new(tx.program),
+            cs,
+        );
 
-        let txid = self.run()?;
-        let vmstate = self.state();
+        let txid = vm.run()?;
 
         // Verify the signatures over txid
         let mut signtx_transcript = Transcript::new(b"ZkVM.signtx");
         signtx_transcript.commit_bytes(b"txid", &txid.0);
-        let signtx_point_op = self.tx
-            .signature
-            .verify_aggregated(&mut signtx_transcript, &self.signtx_keys[..]);
-        self.deferred_operations.push(signtx_point_op);
+        let signtx_point_op = tx.signature
+            .verify_aggregated(&mut signtx_transcript, &verifier.signtx_keys[..]);
+        verifier.deferred_operations.push(signtx_point_op);
 
         // Verify all deferred crypto operations.
         PointOp::verify_batch(&self.deferred_operations[..])?;
@@ -75,22 +72,56 @@ impl<'t, 'g> Verifier<'t, 'g> {
         })
     }
     
-    fn current_run_subslice(&self) -> Result<Subslice, VMError> {
-        match self.state().current_run {
-            Run::ProgramWitness(_) => Err(VMError::DataNotOpaque),
-            Run::Program(prog, offset) => Subslice::new_with_range(&prog, offset..prog.len())
-        }
-    }
 
-    fn update_current_run(&mut self, offset: usize) -> Result<(), VMError> {
-        match &mut self.state().current_run {
-            Run::ProgramWitness(_) => Err(VMError::DataNotOpaque),
-            Run::Program(_, ref mut curr_offset) => {
-                *curr_offset = offset;
-                Ok(())
-            }
-        }
-    }
+    // /// Instantiate a verifying VM
+    // pub fn new(tx: Tx, bp_gens: &'g BulletproofGens) -> Self {
+        
+    //     let mut r1cs_transcript = Transcript::new(b"ZkVM.r1cs");
+    //     let pc_gens = PedersenGens::default();
+    //     let cs = r1cs::Verifier::new(bp_gens, &pc_gens, &mut r1cs_transcript);
+
+    //     Verifier {
+    //         tx,
+    //         state: State::new(
+    //             tx.version,
+    //             tx.mintime,
+    //             tx.maxtime,
+    //             0..tx.program.len(),
+    //             cs,
+    //         ),
+    //         signtx_keys: Vec::new(),
+    //         deferred_operations: Vec::new(),
+    //     }
+    // }
+
+    // pub fn verify_tx(self) -> Result<VerifiedTx, VMError> {
+
+    //     let txid = self.run()?;
+    //     let vmstate = self.state();
+
+    //     // Verify the signatures over txid
+    //     let mut signtx_transcript = Transcript::new(b"ZkVM.signtx");
+    //     signtx_transcript.commit_bytes(b"txid", &txid.0);
+    //     let signtx_point_op = self.tx
+    //         .signature
+    //         .verify_aggregated(&mut signtx_transcript, &self.signtx_keys[..]);
+    //     self.deferred_operations.push(signtx_point_op);
+
+    //     // Verify all deferred crypto operations.
+    //     PointOp::verify_batch(&self.deferred_operations[..])?;
+
+    //     // Verify the R1CS proof
+    //     vmstate.cs.verify(&self.tx.proof).map_err(|_| VMError::InvalidR1CSProof)?;
+
+    //     Ok(VerifiedTx {
+    //         version: self.tx.version,
+    //         mintime: self.tx.mintime,
+    //         maxtime: self.tx.maxtime,
+    //         id: txid,
+    //         log: vmstate.txlog,
+    //     })
+    // }
+    
 
     fn decode_input(&mut self, input: Data) -> Result<(Contract, TxID, UTXO), VMError> {
 //        Input  =  PreviousTxID || PreviousOutput
@@ -159,48 +190,76 @@ impl<'t, 'g> Verifier<'t, 'g> {
 }
 
 
-impl<'t, 'g> VM for Verifier<'t, 'g> {
-    type CS = r1cs::Verifier<'t, 'g>;
+// impl<'t, 'g> VM for Verifier<'t, 'g> {
+//     type CS = r1cs::Verifier<'t, 'g>;
 
-    fn state(&mut self) -> &mut State<Self::CS> {
-        &mut self.state
+//     fn state(&mut self) -> &mut State<Self::CS> {
+//         &mut self.state
+//     }
+
+//     // Return the next instruction, if it exists, and advance the 
+//     // program state pointer.
+//     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError> {
+//         let program = self.current_run_subslice()?;
+
+//         // Reached the end of the program - no more instructions to execute.
+//         if program.len() == 0 {
+//             return Ok(None);
+//         }
+
+//         let instr = Instruction::parse(&mut program)?;
+//         self.update_current_run(program.range().start);
+//         Ok(Some(instr))
+//     }
+
+    
+//     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
+//         let state = self.state();
+//         let variable_commitment = state.variable_commitments[var.index];
+//         if let Some(var) = variable_commitment.variable {
+//             (variable_commitment.commitment, var)
+//         } else {
+//             let r1cs_var = state.cs.commit(variable_commitment.commitment);
+//             state.variable_commitments[var.index].variable = Some(r1cs_var);
+//             (variable_commitment.commitment, r1cs_var)
+//         }
+//     }
+
+//     // // Unimplemented functions
+//     // fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
+//     //     let state = self.state();
+//     //     // This subscript never fails because the variable is created only via `make_variable`.
+//     //     match state.variable_commitments[var.index] {
+//     //         VariableCommitment::Detached(p) => p,
+//     //         VariableCommitment::Attached(p, _) => p,
+//     //     }
+//     // }
+// }
+
+
+
+
+
+impl Run {
+    fn new(program: Vec<u8>) -> Self {
+        Run{ program, offset: 0 }
     }
+}
 
-    // Return the next instruction, if it exists, and advance the 
-    // program state pointer.
+impl RunTrait for Run {
     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError> {
-        let program = self.current_run_subslice()?;
+        let program = Subslice::new_with_range(self.program, offset..self.program.len());
 
         // Reached the end of the program - no more instructions to execute.
         if program.len() == 0 {
             return Ok(None);
         }
-
         let instr = Instruction::parse(&mut program)?;
-        self.update_current_run(program.range().start);
+        self.offset = program.range().start;
         Ok(Some(instr))
     }
-    
-    
-    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
-        let state = self.state();
-        let variable_commitment = state.variable_commitments[var.index];
-        if let Some(var) = variable_commitment.variable {
-            (variable_commitment.commitment, var)
-        } else {
-            let r1cs_var = state.cs.commit(variable_commitment.commitment);
-            state.variable_commitments[var.index].variable = Some(r1cs_var);
-            (variable_commitment.commitment, r1cs_var)
-        }
-    }
-
-    // // Unimplemented functions
-    // fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
-    //     let state = self.state();
-    //     // This subscript never fails because the variable is created only via `make_variable`.
-    //     match state.variable_commitments[var.index] {
-    //         VariableCommitment::Detached(p) => p,
-    //         VariableCommitment::Attached(p, _) => p,
-    //     }
-    // }
 }
+
+
+
+

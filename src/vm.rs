@@ -68,7 +68,11 @@ pub struct VerifiedTx {
     pub log: Vec<Entry>,
 }
 
-pub struct State<CS: r1cs::ConstraintSystem> {
+pub struct VM<CS, R>
+where 
+CS: r1cs::ConstraintSystem,
+R: RunTrait,
+{
     mintime: u64,
     maxtime: u64,
 
@@ -83,23 +87,32 @@ pub struct State<CS: r1cs::ConstraintSystem> {
     // stack of all items in the VM
     stack: Vec<Item>,
 
-    pub current_run: Run,
-    run_stack: Vec<Run>,
+    pub current_run: R,
+    run_stack: Vec<R>,
     pub txlog: Vec<Entry>,
     pub variable_commitments: Vec<VariableCommitment>,
     pub cs: CS,
 }
 
-/// An state of running a single program string.
-/// VM consists of a stack of such _Runs_.
-/// The slices begin at the next instruction to be processed.
-pub enum Run {
-    /// Prover's running program
-    ProgramWitness(VecDeque<Instruction>),
-
-    /// Verifier's running program is a slice into a tx.program
-    Program(Vec<u8>, usize)
+/// A trait for an instance of a "run": a currently executed program.
+pub trait RunTrait {
+    /// Returns the next instruction.
+    /// Returns Err() upon decoding/format error.
+    /// Returns Ok(Some()) if there is another instruction available.
+    /// Returns Ok(None if there is no more instructions to execute.
+    fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
 }
+
+// /// An state of running a single program string.
+// /// VM consists of a stack of such _Runs_.
+// /// The slices begin at the next instruction to be processed.
+// pub enum Run {
+//     /// Prover's running program
+//     ProgramWitness(VecDeque<Instruction>),
+
+//     /// Verifier's running program is a slice into a tx.program
+//     Program(Vec<u8>, usize)
+// }
 
 /// And indirect reference to a high-level variable within a constraint system.
 /// Variable types store index of such commitments that allows replacing them.
@@ -118,51 +131,53 @@ pub struct VariableCommitment {
     pub witness: Option<CommitmentWitness>,
 }
 
-/// `VM` is a common trait for verifier's and prover's instances of ZkVM
-/// that implements instructions generically.
-pub trait VM {
-    /// Concrete type implementing CS API: r1cs::Verifier or r1cs::Prover
-    type CS: r1cs::ConstraintSystem;
+// /// `VM` is a common trait for verifier's and prover's instances of ZkVM
+// /// that implements instructions generically.
+// pub trait Runner {
+//     /// Concrete type implementing CS API: r1cs::Verifier or r1cs::Prover
+//     type CS: r1cs::ConstraintSystem;
 
-    /// Returns the reference to the state object
-    fn state(&mut self) -> &mut State<Self::CS>;
+//     type Run: RunTrait;
 
-    /// Provides the next instruction
-    fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
+//     /// Returns the reference to the state object
+//     fn state(&mut self) -> &mut State<Self::CS>;
+
+//     /// Provides the next instruction
+//     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
 
 
-    /// TBD???
-    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
+//     /// TBD???
+//     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
 
     
-}
+// }
 
-impl<CS: r1cs::ConstraintSystem> State<CS> {
-
-    pub fn verifier_state(
+impl<CS, R> VM<CS, R> 
+where
+CS: r1cs::ConstraintSystem,
+R: RunTrait,
+{
+    /// Instantiates a new VM instance.
+    pub fn new(
         version: u64,
         mintime: u64,
         maxtime: u64,
-        program: Vec<u8>,
+        run: R,
         cs: CS
     ) -> Self {
-        State{
+        VM {
             mintime,
             maxtime,
             extension: version > CURRENT_VERSION,
             unique: false,
             stack: Vec::new(),
-            current_run: Run::Program(program, 0),
+            current_run: run,
             run_stack: Vec::new(),
             txlog: vec![Entry::Header(version, mintime, maxtime)],
             variable_commitments: Vec::new(),
             cs,
         }
     }
-}
-
-/// Internal implementation of VM common to both prover and verifier
-pub trait VMInternal: VM {
 
     /// Runs through the entire program and nested programs until completion.
     fn run(&mut self) -> Result<TxID, VMError> {
@@ -172,25 +187,24 @@ pub trait VMInternal: VM {
             }
         }
 
-        if self.state().stack.len() > 0 {
+        if self.stack.len() > 0 {
             return Err(VMError::StackNotClean);
         }
 
-        if self.state().unique == false {
+        if self.unique == false {
             return Err(VMError::NotUniqueTxid);
         }
 
-        let txid = TxID::from_log(&self.state().txlog[..]);
+        let txid = TxID::from_log(&self.txlog[..]);
         
         Ok(txid)
     }
 
     fn finish_run(&self) -> bool {
-        let state = self.state();
         // Do we have more programs to run?
-        if let Some(run) = state.run_stack.pop() {
+        if let Some(run) = self.run_stack.pop() {
             // Continue with the previously remembered program
-            state.current_run = run;
+            self.current_run = run;
             return true;
         }
         // Finish the execution
@@ -252,13 +266,12 @@ pub trait VMInternal: VM {
     }
 
     fn pushdata(&mut self, data: Data) -> Result<(), VMError> {
-        self.state().push_item(data);
+        self.push_item(data);
         Ok(())
     }
 
     fn drop(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        match state.pop_item()? {
+        match self.pop_item()? {
             Item::Data(_) => Ok(()),
             Item::Variable(_) => Ok(()),
             Item::Expression(_) => Ok(()),
@@ -268,12 +281,11 @@ pub trait VMInternal: VM {
     }
 
     fn dup(&mut self, i: usize) -> Result<(), VMError> {
-        let state = self.state();
-        if i >= state.stack.len() {
+        if i >= self.stack.len() {
             return Err(VMError::StackUnderflow);
         }
-        let item_idx = state.stack.len() - i - 1;
-        let item = match &state.stack[item_idx] {
+        let item_idx = self.stack.len() - i - 1;
+        let item = match &self.stack[item_idx] {
             // Call some item method implemented for verifier/prover
             // item.dup_item()
             Item::Data(x) => Item::Data(*x),
@@ -282,38 +294,35 @@ pub trait VMInternal: VM {
             Item::Constraint(x) => Item::Constraint(x.clone()),
             _ => return Err(VMError::TypeNotCopyable),
         };
-        state.push_item(item);
+        self.push_item(item);
         Ok(())
     }
 
     fn roll(&mut self, i: usize) -> Result<(), VMError> {
-        let state = self.state();
-        if i >= state.stack.len() {
+        if i >= self.stack.len() {
             return Err(VMError::StackUnderflow);
         }
-        let item = state.stack.remove(state.stack.len() - i - 1);
-        state.push_item(item);
+        let item = self.stack.remove(self.stack.len() - i - 1);
+        self.push_item(item);
         Ok(())
     }
 
     fn nonce(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let predicate = state.pop_item()?.to_data()?.to_predicate()?;
+        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
         let contract = Contract {
             predicate,
             payload: Vec::new(),
         };
-        state.txlog.push(Entry::Nonce(predicate.to_point(), state.maxtime));
-        state.push_item(contract);
-        state.unique = true;
+        self.txlog.push(Entry::Nonce(predicate.to_point(), self.maxtime));
+        self.push_item(contract);
+        self.unique = true;
         Ok(())
     }
     
     fn issue(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let predicate = Predicate(state.pop_item()?.to_data()?.to_point(&self.tx.program)?);
-        let flv = state.pop_item()?.to_variable()?;
-        let qty = state.pop_item()?.to_variable()?;
+        let predicate = Predicate(self.pop_item()?.to_data()?.to_point(&self.tx.program)?);
+        let flv = self.pop_item()?.to_variable()?;
+        let qty = self.pop_item()?.to_variable()?;
 
         let (flv_point, _) = self.attach_variable(flv);
         let (qty_point, _) = self.attach_variable(qty);
@@ -331,87 +340,82 @@ pub trait VMInternal: VM {
         let qty_expr = self.variable_to_expression(qty);
         self.add_range_proof(64, qty_expr)?;
 
-        state.txlog.push(Entry::Issue(qty_point, flv_point));
+        self.txlog.push(Entry::Issue(qty_point, flv_point));
 
         let contract = Contract {
             predicate,
             payload: vec![PortableItem::Value(value)],
         };
 
-        state.push_item(contract);
+        self.push_item(contract);
         Ok(())
     }
 
     /// _input_ **input** → _contract_
     fn input(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let serialized_input = state.pop_item()?.to_data()?;
+        let serialized_input = self.pop_item()?.to_data()?;
         let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
-        state.push_item(contract);
-        state.txlog.push(Entry::Input(utxo));
-        state.unique = true;
+        self.push_item(contract);
+        self.txlog.push(Entry::Input(utxo));
+        self.unique = true;
         Ok(())
     }
 
 
     fn retire(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let value = state.pop_item()?.to_value()?;
+        let value = self.pop_item()?.to_value()?;
         let qty = self.get_variable_commitment(value.qty);
         let flv = self.get_variable_commitment(value.flv);
-        state.txlog.push(Entry::Retire(qty, flv));
+        self.txlog.push(Entry::Retire(qty, flv));
         Ok(())
     }
 
     /// _items... predicate_ **output:_k_** → ø
     fn output(&mut self, k: usize) -> Result<(), VMError> {
-        let state = self.state();
-        let predicate = Predicate(state.pop_item()?.to_data()?.to_point()?);
+        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
 
-        if k > state.stack.len() {
+        if k > self.stack.len() {
             return Err(VMError::StackUnderflow);
         }
-        let payload = state
+        let payload = self
             .stack
-            .drain(state.stack.len() - k..)
+            .drain(self.stack.len() - k..)
             .map(|item| item.to_portable())
             .collect::<Result<Vec<_>, _>>()?;
 
         let output = self.encode_output(Contract { predicate, payload });
-        state.txlog.push(Entry::Output(output));
+        self.txlog.push(Entry::Output(output));
         Ok(())
     }
 
     fn contract(&mut self, k: usize) -> Result<(), VMError> {
-        let state = self.state();
-        let predicate = Predicate(state.pop_item()?.to_data()?.to_point()?);
+        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
 
-        if k > state.stack.len() {
+        if k > self.stack.len() {
             return Err(VMError::StackUnderflow);
         }
-        let payload = state
+        let payload = self
             .stack
-            .drain(state.stack.len() - k..)
+            .drain(self.stack.len() - k..)
             .map(|item| item.to_portable())
             .collect::<Result<Vec<_>, _>>()?;
 
-        state.push_item(Contract { predicate, payload });
+        self.push_item(Contract { predicate, payload });
         Ok(())
     }
 
     fn cloak(&mut self, m: usize, n: usize) -> Result<(), VMError> {
-        let state = self.state();
         // _widevalues commitments_ **cloak:_m_:_n_** → _values_
         // Merges and splits `m` [wide values](#wide-value-type) into `n` [values](#values).
 
-        if m > state.stack.len() || n > state.stack.len() {
+        if m > self.stack.len() || n > self.stack.len() {
             return Err(VMError::StackUnderflow);
         }
         // Now that individual m and n are bounded by the (not even close to overflow) stack size,
         // we can add them together.
         // This does not overflow if the stack size is below 2^30 items.
-        assert!(state.stack.len() < (1usize << 30));
-        if (m + 2 * n) > state.stack.len() {
+        assert!(self.stack.len() < (1usize << 30));
+        if (m + 2 * n) > self.stack.len() {
             return Err(VMError::StackUnderflow);
         }
 
@@ -422,11 +426,11 @@ pub trait VMInternal: VM {
 
         // Make cloak outputs and output values using (qty,flv) commitments
         for _ in 0..n {
-            let flv = state.pop_item()?.to_data()?.to_point()?;
-            let qty = state.pop_item()?.to_data()?.to_point()?;
+            let flv = self.pop_item()?.to_data()?.to_point()?;
+            let qty = self.pop_item()?.to_data()?.to_point()?;
 
-            let qty = state.make_variable(qty);
-            let flv = state.make_variable(flv);
+            let qty = self.make_variable(qty);
+            let flv = self.make_variable(flv);
 
             let value = Value { qty, flv };
             let cloak_value = self.value_to_cloak_value(&value);
@@ -438,7 +442,7 @@ pub trait VMInternal: VM {
 
         // Make cloak inputs out of wide values
         for _ in 0..m {
-            let item = state.pop_item()?;
+            let item = self.pop_item()?;
             let walue = self.item_to_wide_value(item)?;
 
             let cloak_value = self.wide_value_to_cloak_value(&walue);
@@ -451,7 +455,7 @@ pub trait VMInternal: VM {
 
         // Push in the same order.
         for v in output_values.into_iter() {
-            state.push_item(v);
+            self.push_item(v);
         }
 
         Ok(())
@@ -464,18 +468,16 @@ pub trait VMInternal: VM {
     // Both: put the payload onto the stack.
     // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let contract = state.pop_item()?.to_contract()?;
-        state.signtx_keys.push(VerificationKey(contract.predicate.0));
+        let contract = self.pop_item()?.to_contract()?;
+        self.signtx_keys.push(VerificationKey(contract.predicate.0));
         for item in contract.payload.into_iter() {
-            state.push_item(item);
+            self.push_item(item);
         }
         Ok(())
     }
 
     fn ext(&mut self, _: u8) -> Result<(), VMError> {
-        let state = self.state();
-        if state.extension {
+        if self.extension {
             // if extensions are allowed by tx version,
             // unknown opcodes are treated as no-ops.
             Ok(())
@@ -498,9 +500,8 @@ pub trait VMInternal: VM {
     }
 
     fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
-        let state = self.state();
         spacesuit::range_proof(
-            &mut state.cs,
+            &mut self.cs,
             r1cs::LinearCombination::from_iter(expr.terms),
             // TBD: maintain the assignment for the expression and provide it here
             None,
@@ -508,14 +509,8 @@ pub trait VMInternal: VM {
         )
         .map_err(|_| VMError::R1CSInconsistency)
     }
-}
 
-impl<T: VM> VMInternal for T {}
-
-
-impl<CS: r1cs::ConstraintSystem> State<CS> {
-
-    pub fn push_item<T>(&mut self, item: T)
+    fn push_item<T>(&mut self, item: T)
     where
         T: Into<Item>,
     {
@@ -526,6 +521,7 @@ impl<CS: r1cs::ConstraintSystem> State<CS> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
 
+
     // fn make_variable(&mut self, commitment: Data) -> Result<Variable, VMError> {
     //     let index = self.variable_commitments.len();
 
@@ -534,15 +530,9 @@ impl<CS: r1cs::ConstraintSystem> State<CS> {
     //         .push(VariableCommitment::Detached(commitment.into()));
     //     Variable { index }
     // }
-}
-
-
-// Utility methods
 
 
 /*
-
-impl<transcript, 'gens> VM<'transcript, 'gens> {
 
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
         // This subscript never fails because the variable is created only via `make_variable`.
@@ -694,8 +684,13 @@ impl<transcript, 'gens> VM<'transcript, 'gens> {
         )
         .map_err(|_| VMError::R1CSInconsistency)
     }
+
+    */
 }
 
+
+
+/*
 impl Contract {
     fn output_size(&self) -> usize {
         let mut size = 32 + 4;
