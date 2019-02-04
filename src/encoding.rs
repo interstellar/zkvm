@@ -2,7 +2,8 @@
 //! All methods err using VMError::FormatError for convenience.
 
 use byteorder::{ByteOrder, LittleEndian};
-use core::ops::Range;
+use stdlib::Range;
+use std::ops::Deref;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 
@@ -11,58 +12,78 @@ use crate::errors::VMError;
 #[derive(Copy,Clone,Debug)]
 pub struct SliceView<'a> {
     whole: &'a [u8],
-    index: usize,
+    start: usize,
+    end: usize,
 }
 
 impl<'a> SliceView<'a> {
-    // next advances the internal range and returns the 
-    // updated SliceView
-    fn next(self, offset: usize) -> Result<Self, VMError> {
-        self.index = self.index+offset;
-        Ok(self)
+    fn new(data: &'a [u8]) -> Self {
+        SliceView{
+            start: 0,
+            end: data.len(),
+            whole: data,
+        }
     }
 
-    fn slice(self, offset: usize) -> Result<&'a [u8], VMError> {
-        self.whole.get(self.index..self.index+offset).ok_or(VMError::FormatError)
+     fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    // read_bytes returns a SliceView of the first num_bytes of self and advances
+    // the internal range.
+    fn read_bytes(&mut self, num_bytes: usize) -> Result<SliceView, VMError> {
+        if num_bytes > self.len() {
+            return Err(VMError::FormatError);
+        }
+        let prefix = SliceView{
+            start: self.start,
+            end: self.start+num_bytes,
+            whole: self.whole,
+        };
+        self.start = self.start+num_bytes;
+        Ok(prefix)
+    }
+
+    pub fn read_u8(&mut self) -> Result<u8, VMError> {
+        let bytes = self.read_bytes(1)?;
+        Ok(bytes[0])
+    }
+
+    pub fn read_u32(&mut self) -> Result<u32, VMError> {
+        let bytes = self.read_bytes(4)?;
+        let x = LittleEndian::read_u32(&bytes);
+        Ok(x)
+    }
+
+    pub fn read_usize(&mut self) -> Result<usize, VMError> {
+        let n = self.read_u32()?;
+        Ok(n as usize)
+    }
+
+    pub fn read_u8x32(&mut self) -> Result<[u8; 32], VMError> {
+        let mut buf = [0u8; 32];
+        let bytes = self.read_bytes(32)?;
+        buf[..].copy_from_slice(&bytes);
+        Ok(buf)
+    }
+
+    pub fn read_point(&mut self) -> Result<CompressedRistretto, VMError> {
+        let buf  = self.read_u8x32()?;
+        Ok(CompressedRistretto(buf))
+    }
+
+    pub fn read_scalar(&mut self) -> Result<Scalar, VMError> {
+        let buf = self.read_u8x32()?;
+        Ok(Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)?)
     }
 }
 
-pub fn read_next_u8<'a>(slice: SliceView<'a>) -> Result<(u8, SliceView<'a>), VMError> {
-        let bytes = slice.slice(1)?;
-        Ok((bytes[0], slice.next(1)?))
+impl<'a> Deref for SliceView<'a> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.whole[self.start..self.end]
     }
-
-pub fn read_next_u32<'a>(slice: SliceView<'a>) -> Result<(u32, SliceView<'a>), VMError> {
-    let bytes = slice.slice(4)?;
-    let x = LittleEndian::read_u32(bytes);
-    Ok((x, slice.next(4)?))
-}
-
-pub fn read_next_usize<'a>(slice: SliceView<'a>) -> Result<(usize, SliceView<'a>), VMError> {
-    let (n, next_slice) = read_next_u32(slice)?;
-    Ok((n as usize, next_slice))
-}
-
-pub fn read_next_u8x32<'a>(slice: SliceView<'a>) -> Result<([u8; 32], SliceView<'a>), VMError> {
-    let mut buf = [0u8; 32];
-    let bytes = slice.slice(32)?;
-    buf[..].copy_from_slice(bytes);
-    Ok((buf, slice.next(32)?))
-}
-
-pub fn read_next_bytes<'a>(slice: SliceView<'a>, n: usize) -> Result<(&'a [u8], SliceView<'a>), VMError> {
-    let bytes = slice.slice(n)?;
-    Ok((bytes, slice.next(n)?))
-}
-
-pub fn read_next_point<'a>(slice: SliceView<'a>) -> Result<(CompressedRistretto, SliceView<'a>), VMError> {
-    let (buf, next_slice) = read_next_u8x32(slice)?;
-    Ok((CompressedRistretto(buf), next_slice))
-}
-
-pub fn read_next_scalar<'a>(slice: SliceView<'a>) -> Result<(Scalar, SliceView<'a>), VMError> {
-    let (buf, next_slice) = read_next_u8x32(slice)?;
-    Ok((Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)?, next_slice))
 }
 
 // Writing API
