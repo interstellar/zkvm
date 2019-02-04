@@ -14,16 +14,23 @@ use crate::errors::VMError;
 use crate::encoding::* ;
 use crate::ops::Instruction;
 
-use crate::vm::{VM,Tx,VerifiedTx,RunTrait,VariableCommitment};
+use crate::vm::{VM,Tx,VerifiedTx,RunTrait,Runner};
 
 pub struct Verifier {
     signtx_keys: Vec<VerificationKey>,
-    deferred_operations: Vec<PointOp>,
 }
 
 struct Run {
     program: Vec<u8>,
     offset: usize,
+}
+
+impl Runner for Verifier {
+    type RunType = Run;
+
+    fn commit_variable(&mut self, com: Commitment) -> (CompressedRistretto, r1cs::Variable) {
+        
+    }
 }
 
 
@@ -35,10 +42,7 @@ impl Verifier {
         let pc_gens = PedersenGens::default();
         let cs = r1cs::Verifier::new(bp_gens, &pc_gens, &mut r1cs_transcript);
 
-        let mut verifier = Verifier {
-            signtx_keys: Vec::new(),
-            deferred_operations: Vec::new(),
-        };
+        let mut verifier = Verifier {signtx_keys: Vec::new() };
 
         let mut vm = VM::new(
             tx.version,
@@ -58,17 +62,17 @@ impl Verifier {
         verifier.deferred_operations.push(signtx_point_op);
 
         // Verify all deferred crypto operations.
-        PointOp::verify_batch(&self.deferred_operations[..])?;
+        PointOp::verify_batch(&vm.deferred_operations[..])?;
 
         // Verify the R1CS proof
-        vmstate.cs.verify(&self.tx.proof).map_err(|_| VMError::InvalidR1CSProof)?;
+        vm.cs.verify(&self.tx.proof).map_err(|_| VMError::InvalidR1CSProof)?;
 
         Ok(VerifiedTx {
             version: self.tx.version,
             mintime: self.tx.mintime,
             maxtime: self.tx.maxtime,
             id: txid,
-            log: vmstate.txlog,
+            log: vm.txlog,
         })
     }
     

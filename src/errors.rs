@@ -47,6 +47,10 @@ pub enum VMError {
     #[fail(display = "Item is not a predicate.")]
     TypeNotPredicate,
 
+    /// This error occurs when an instruction requires a commitment type.
+    #[fail(display = "Item is not a commitment.")]
+    TypeNotCommitment,
+
     /// This error occurs when an instruction requires a constraint type.
     #[fail(display = "Item is not a constraint.")]
     TypeNotConstraint,

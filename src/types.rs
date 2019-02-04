@@ -119,11 +119,33 @@ impl PredicateWitness {
     }
 }
 
+#[derive(Clone,Debug)]
+pub enum Commitment {
+    Opaque(CompressedRistretto),
+    Open(Box<CommitmentWitness>),
+}
+
+impl Commitment {
+    pub fn to_point(&self) -> CompressedRistretto {
+        match self {
+            Commitment::Opaque(x) => x,
+            Commitment::Open(w) => w.to_point(),
+        }
+    }
+}
+
 /// Prover's representation of the commitment secret: witness and blinding factor
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 pub struct CommitmentWitness {
     value: Scalar,
     blinding: Scalar,
+}
+
+impl CommitmentWitness {
+    pub fn to_point(&self) -> CompressedRistretto {
+        let gens = PedersenGens::default();
+        gens.commit(self.value, self.blinding).compress()
+    }
 }
 
 impl Item{
@@ -203,6 +225,21 @@ impl Data {
                 }
             }
             
+        }
+    }
+
+    pub fn to_commitment(self) -> Result<Commitment, VMError> {
+        match self {
+            Data::Opaque(data) => {
+                let point = Subslice::new(&data).read_point()?;
+                Ok(Commitment::Opaque(point))
+            }
+            Data::Witness(witness) => {
+                match witness {
+                    DataWitness::Commitment(w) => Ok(Commitment::Open(w)),
+                    _ => Err(VMError::TypeNotCommitment),
+                }
+            }
         }
     }
 

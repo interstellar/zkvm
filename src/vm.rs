@@ -13,7 +13,6 @@ use crate::encoding;
 use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::point_ops::PointOp;
-use crate::predicate::Predicate;
 use crate::signature::*;
 use crate::transcript::TranscriptProtocol;
 use crate::txlog::{Entry, TxID, UTXO};
@@ -71,7 +70,7 @@ pub struct VerifiedTx {
 pub struct VM<CS, R>
 where 
 CS: r1cs::ConstraintSystem,
-R: RunTrait,
+R: Runner,
 {
     mintime: u64,
     maxtime: u64,
@@ -87,11 +86,20 @@ R: RunTrait,
     // stack of all items in the VM
     stack: Vec<Item>,
 
-    pub current_run: R,
-    run_stack: Vec<R>,
+    runner: R,
+
+    pub current_run: R::Run,
+    run_stack: Vec<R::Run>,
     pub txlog: Vec<Entry>,
     pub variable_commitments: Vec<VariableCommitment>,
     pub cs: CS,
+    pub deferred_operations: Vec<PointOp>,
+}
+
+pub trait Runner {
+    type RunType: RunTrait;
+
+    fn commit_variable(&mut self, com: Commitment) -> (CompressedRistretto, r1cs::Variable);
 }
 
 /// A trait for an instance of a "run": a currently executed program.
@@ -118,7 +126,7 @@ pub trait RunTrait {
 /// Variable types store index of such commitments that allows replacing them.
 pub struct VariableCommitment {
     /// Pedersen commitment to a variable
-    pub commitment: CompressedRistretto,
+    pub commitment: Commitment,
 
     /// Attached/detached state
     /// None if the variable is not attached to the CS yet,
@@ -126,9 +134,6 @@ pub struct VariableCommitment {
     /// Some if variable is attached to the CS yet and has an index in CS,
     /// so its commitment is no longer replaceable via `reblind`.
     pub variable: Option<r1cs::Variable>,
-
-    /// Witness value and its blinding factor for the commitment
-    pub witness: Option<CommitmentWitness>,
 }
 
 // /// `VM` is a common trait for verifier's and prover's instances of ZkVM
@@ -213,7 +218,8 @@ R: RunTrait,
 
     /// Returns a flag indicating whether to continue the execution
     fn step(&mut self) -> Result<bool, VMError> {
-        if let Some(instr) = self.next_instruction()? {
+        if let Some(instr) = self.current_run.next_instruction()? {
+        // if let Some(instr) = self.next_instruction()? {
             // Attempt to read the next instruction and advance the program state
             match instr {
                 // the data is just a slice, so the clone would copy the slice struct,
@@ -320,22 +326,25 @@ R: RunTrait,
     }
     
     fn issue(&mut self) -> Result<(), VMError> {
-        let predicate = Predicate(self.pop_item()?.to_data()?.to_point(&self.tx.program)?);
+        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
         let flv = self.pop_item()?.to_variable()?;
         let qty = self.pop_item()?.to_variable()?;
 
         let (flv_point, _) = self.attach_variable(flv);
         let (qty_point, _) = self.attach_variable(qty);
 
-        let value = Value { qty, flv };
+        // Verify consistency between the predicate and the flavor point.
+        {
+            let flv_scalar = Value::issue_flavor(&predicate);
+            // flv_point == flavor·B    ->   0 == -flv_point + flv_scalar·B
+            self.deferred_operations.push(PointOp {
+                primary: Some(flv_scalar),
+                secondary: None,
+                arbitrary: vec![(-Scalar::one(), flv_point)],
+            });
+        }
 
-        let flv_scalar = Value::issue_flavor(&predicate);
-        // flv_point == flavor·B    ->   0 == -flv_point + flv_scalar·B
-        self.deferred_operations.push(PointOp {
-            primary: Some(flv_scalar),
-            secondary: None,
-            arbitrary: vec![(-Scalar::one(), flv_point)],
-        });
+        let value = Value { qty, flv };
 
         let qty_expr = self.variable_to_expression(qty);
         self.add_range_proof(64, qty_expr)?;
@@ -486,6 +495,33 @@ R: RunTrait,
         }
     }
 
+    fn make_variable(&mut self, commitment: Commitment) -> Result<Variable, VMError> {
+        let index = self.variable_commitments.len();
+
+        self.variable_commitments.push(
+            VariableCommitment{
+                commitment: commitment,
+                variable: None,
+            }
+        );
+        Ok(Variable { index })
+    }
+
+    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
+        // This subscript never fails because the variable is created only via `make_variable`.
+        let v_com = self.variable_commitments[var.index];
+        match v_com.variable {
+            Some(v) => {
+                (v_com.commitment.to_point(), v)
+            },
+            None => {
+                let (point, var) = self.runner.commit_variable(v_com);
+                self.variable_commitments[var.index].variable = Some(var);
+                (point, var)
+            },
+        }
+    }
+
     // Unimplemented functions
      fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
         unimplemented!();
@@ -520,16 +556,7 @@ R: RunTrait,
     pub fn pop_item(&mut self) -> Result<Item, VMError> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
-
-
-    // fn make_variable(&mut self, commitment: Data) -> Result<Variable, VMError> {
-    //     let index = self.variable_commitments.len();
-
-    //     // TBD: if data has witness, coerce to commitment witness.
-    //     self.variable_commitments
-    //         .push(VariableCommitment::Detached(commitment.into()));
-    //     Variable { index }
-    // }
+}
 
 
 /*
@@ -686,7 +713,6 @@ R: RunTrait,
     }
 
     */
-}
 
 
 
