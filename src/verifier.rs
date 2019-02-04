@@ -11,9 +11,10 @@ use crate::point_ops::PointOp;
 use crate::txlog::{Entry, TxID, UTXO};
 use crate::types::*;
 use crate::errors::VMError;
-use crate::encoding;
+use crate::encoding::* ;
+use crate::ops::Instruction;
 
-use crate::vm::{VM,VMInternal,Tx,VerifiedTx,State,VariableCommitment};
+use crate::vm::{VM,VMInternal,Tx,VerifiedTx,Run,State,VariableCommitment};
 use crate::predicate::Predicate;
 
 pub struct Verifier<'t, 'g> {
@@ -72,6 +73,13 @@ impl<'t, 'g> Verifier<'t, 'g> {
             id: txid,
             log: vmstate.txlog,
         })
+    }
+    
+    pub fn current_run_subslice(&self) -> Result<Subslice, VMError> {
+        match self.state().current_run {
+            Run::ProgramWitness(_) => Err(VMError::DataNotOpaque),
+            Run::Program(range) => Subslice::new_with_range(&self.tx.program, range)
+        }
     }
 
     fn decode_input(&mut self, input: Data) -> Result<(Contract, TxID, UTXO), VMError> {
@@ -146,6 +154,22 @@ impl<'t, 'g> VM for Verifier<'t, 'g> {
 
     fn state(&mut self) -> &mut State<Self::CS> {
         &mut self.state
+    }
+
+    // Return the next instruction, if it exists, and advance the 
+    // program state pointer.
+    fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError> {
+        let program = self.current_run_subslice()?;
+        if program.len() == 0 {
+            return Ok(None);
+        }
+        let instr = Instruction::parse(&mut program)?;
+        self.state().current_run = Run::Program(program.range());
+        Ok(Some(instr))
+    }
+
+    fn tx_storage(&self) -> &[u8] {
+        &self.tx.program
     }
 
     fn issue(&mut self) -> Result<(), VMError> {

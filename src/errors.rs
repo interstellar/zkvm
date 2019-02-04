@@ -43,6 +43,10 @@ pub enum VMError {
     #[fail(display = "Item is not an expression.")]
     TypeNotExpression,
 
+    /// This error occurs when an instruction requires a predicate type.
+    #[fail(display = "Item is not a predicate.")]
+    TypeNotPredicate,
+
     /// This error occurs when an instruction requires a constraint type.
     #[fail(display = "Item is not a constraint.")]
     TypeNotConstraint,

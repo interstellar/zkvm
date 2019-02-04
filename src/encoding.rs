@@ -25,6 +25,17 @@ impl<'a> Subslice<'a> {
         }
     }
 
+    pub fn new_with_range(data: &'a [u8], range: Range<usize>) -> Result<Self, VMError> {
+        if range.end > data.len() || range.start > data.len() {
+            return Err(VMError::FormatError)
+        }
+        Ok(Subslice{
+            start: range.start,
+            end: range.end,
+            whole: data,
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.end - self.start
     }

@@ -12,10 +12,6 @@ use crate::errors::VMError;
 use crate::point_ops::PointOp;
 use crate::transcript::TranscriptProtocol;
 
-/// Predicate is represented by a compressed Ristretto point.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Predicate(pub CompressedRistretto);
-
 impl Predicate {
     /// Computes a disjunction of two predicates.
     pub fn or(&self, right: &Predicate) -> Result<Predicate, VMError> {

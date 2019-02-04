@@ -83,7 +83,7 @@ pub struct State<CS: r1cs::ConstraintSystem> {
     // stack of all items in the VM
     stack: Vec<Item>,
 
-    current_run: Run,
+    pub current_run: Run,
     run_stack: Vec<Run>,
     pub txlog: Vec<Entry>,
     pub variable_commitments: Vec<VariableCommitment>,
@@ -93,7 +93,7 @@ pub struct State<CS: r1cs::ConstraintSystem> {
 /// An state of running a single program string.
 /// VM consists of a stack of such _Runs_.
 /// The slices begin at the next instruction to be processed.
-enum Run {
+pub enum Run {
     /// Prover's running program
     ProgramWitness(VecDeque<Instruction>),
 
@@ -132,6 +132,12 @@ pub trait VM {
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
 
     fn input(&mut self) -> Result<(), VMError>;
+
+    fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
+
+    // For the verifier, tx_storage returns the tx program and for the prover,
+    // we return an empty slice.
+    fn tx_storage(&self) -> &[u8];
 }
 
 impl<CS: r1cs::ConstraintSystem> State<CS> {
@@ -196,7 +202,7 @@ pub trait VMInternal: VM {
 
     /// Returns a flag indicating whether to continue the execution
     fn step(&mut self) -> Result<bool, VMError> {
-        if let Some(instr) = self.next_instruction() {
+        if let Some(instr) = self.next_instruction()? {
             // Attempt to read the next instruction and advance the program state
             match instr {
                 // the data is just a slice, so the clone would copy the slice struct,
@@ -295,12 +301,12 @@ pub trait VMInternal: VM {
 
     fn nonce(&mut self) -> Result<(), VMError> {
         let state = self.state();
-        let predicate = Predicate(state.pop_item()?.to_data()?.to_point()?);
+        let predicate = state.pop_item()?.to_data()?.to_predicate(self.tx_storage())?;
         let contract = Contract {
             predicate,
             payload: Vec::new(),
         };
-        state.txlog.push(Entry::Nonce(predicate, state.maxtime));
+        state.txlog.push(Entry::Nonce(predicate.to_point(), state.maxtime));
         state.push_item(contract);
         state.unique = true;
         Ok(())
@@ -434,18 +440,6 @@ pub trait VMInternal: VM {
         } else {
             Err(VMError::ExtensionsNotAllowed)
         }
-    }
-
-    // Return the next instruction, if it exists, and advance the 
-    // program state pointer.
-    fn next_instruction(&mut self) -> Option<Instruction> {
-        // Maybe implemented by each type, or in the Run type? 
-        // let (instr, instr_size) =
-        //     Instruction::parse(&txprogram, self.state().current_run.range)?;
-
-        // // Immediately update the offset for the next instructions
-        // self.state().current_run.offset += instr_size;
-        unimplemented!();
     }
 
     // Unimplemented functions

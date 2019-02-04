@@ -10,6 +10,7 @@ use merlin::Transcript;
 use crate::ops::Instruction;
 use crate::txlog::UTXO;
 use crate::errors::VMError;
+use crate::encoding::Subslice;
 use crate::predicate::Predicate;
 
 #[derive(Debug)]
@@ -29,20 +30,25 @@ pub enum PortableItem {
     Value(Value),
 }
 
+pub enum Program {
+    Opaque(Range<usize>),
+    Witness(Vec<Instruction>)
+}
+
 #[derive(Debug)]
 pub enum Data {
     Opaque(Range<usize>),
-    Witness(Box<DataWitness>)
+    Witness(DataWitness)
 }
 
 /// Prover's representation of the witness.
 #[derive(Debug)]
 pub enum DataWitness {
     Program(Vec<Instruction>),
-    Predicate(PredicateWitness), // maybe having Predicate and one more indirection would be cleaner - lets see how it plays out
-    Commitment(CommitmentWitness),
-    Scalar(Scalar),
-    Input(Contract, UTXO),
+    Predicate(Box<PredicateWitness>), // maybe having Predicate and one more indirection would be cleaner - lets see how it plays out
+    Commitment(Box<CommitmentWitness>),
+    Scalar(Box<Scalar>),
+    Input(Box<(Contract, UTXO)>),
 }
 
 #[derive(Debug)]
@@ -85,12 +91,33 @@ pub enum Constraint {
     // this also allows us not to wrap this enum in a struct.
 }
 
+#[derive(Debug)]
+pub enum Predicate {
+    Opaque(CompressedRistretto),
+    Witness(Box<PredicateWitness>),
+}
+
+impl Predicate {
+    pub fn to_point(&self) -> CompressedRistretto {
+        match self {
+            Predicate::Opaque(point) => *point,
+            Predicate::Witness(witness) => witness.to_point(), 
+        }
+    }
+}
+
 /// Prover's representation of the predicate tree with all the secrets
 #[derive(Debug)]
 pub enum PredicateWitness {
     Key(Scalar),
     Program(Vec<Instruction>),
     Or(Box<(PredicateWitness, PredicateWitness)>),
+}
+
+impl PredicateWitness {
+    pub fn to_point(&self) -> CompressedRistretto {
+        unimplemented!()
+    }
 }
 
 /// Prover's representation of the commitment secret: witness and blinding factor
@@ -175,6 +202,22 @@ impl Data {
     // pub fn to_point(self) -> Result<CompressedRistretto, VMError> {
     //     Ok(CompressedRistretto(self.to_u8x32()?))
     // }
+
+    pub fn to_predicate(self, program: &[u8]) -> Result<Predicate, VMError> {
+        match self {
+            Data::Opaque(range) => {
+                let data = Subslice::new_with_range(program, range)?;
+                Ok(Predicate::Opaque(data.read_point()?))
+            }
+            Data::Witness(witness) => {
+                match witness {
+                    DataWitness::Predicate(w) => Ok(Predicate::Witness(w)),
+                    _ => Err(VMError::TypeNotPredicate),
+                }
+            }
+            
+        }
+    }
 
     pub fn to_u8x32(self, program: &[u8]) ->Result<[u8; 32], VMError> {
         let mut buf = [0u8; 32];
