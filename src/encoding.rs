@@ -2,7 +2,7 @@
 //! All methods err using VMError::FormatError for convenience.
 
 use byteorder::{ByteOrder, LittleEndian};
-use stdlib::Range;
+use core::ops::Range;
 use std::ops::Deref;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
@@ -10,32 +10,36 @@ use curve25519_dalek::scalar::Scalar;
 use crate::errors::VMError;
 
 #[derive(Copy,Clone,Debug)]
-pub struct SliceView<'a> {
+pub struct Subslice<'a> {
     whole: &'a [u8],
     start: usize,
     end: usize,
 }
 
-impl<'a> SliceView<'a> {
-    fn new(data: &'a [u8]) -> Self {
-        SliceView{
+impl<'a> Subslice<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Subslice{
             start: 0,
             end: data.len(),
             whole: data,
         }
     }
 
-     fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.end - self.start
     }
 
-    // read_bytes returns a SliceView of the first num_bytes of self and advances
+    pub fn range(&self) -> Range<usize> {
+        self.start..self.end
+    }
+
+    // read_bytes returns a Subslice of the first num_bytes of self and advances
     // the internal range.
-    fn read_bytes(&mut self, num_bytes: usize) -> Result<SliceView, VMError> {
+    pub fn read_bytes(&mut self, num_bytes: usize) -> Result<Subslice, VMError> {
         if num_bytes > self.len() {
             return Err(VMError::FormatError);
         }
-        let prefix = SliceView{
+        let prefix = Subslice{
             start: self.start,
             end: self.start+num_bytes,
             whole: self.whole,
@@ -55,7 +59,8 @@ impl<'a> SliceView<'a> {
         Ok(x)
     }
 
-    pub fn read_usize(&mut self) -> Result<usize, VMError> {
+    // returns a 32-byte "size" type used in ZkVM
+    pub fn read_size(&mut self) -> Result<usize, VMError> {
         let n = self.read_u32()?;
         Ok(n as usize)
     }
@@ -78,7 +83,7 @@ impl<'a> SliceView<'a> {
     }
 }
 
-impl<'a> Deref for SliceView<'a> {
+impl<'a> Deref for Subslice<'a> {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
