@@ -44,18 +44,25 @@ impl<'a> Subslice<'a> {
         self.start..self.end
     }
 
-    // read_bytes returns a Subslice of the first num_bytes of self and advances
-    // the internal range.
-    pub fn read_bytes(&mut self, num_bytes: usize) -> Result<Subslice, VMError> {
-        if num_bytes > self.len() {
+    /// Copies the contents of the subslice into a `Vec<u8>`.
+    pub fn to_vec(&self) -> Vec<u8> {
+        let buf = Vec::with_capacity(self.len());
+        buf.extend_from_slice(&self);
+        buf
+    }
+
+    /// Returns a Subslice of the first `prefix_size` of bytes and advances
+    /// the internal offset.
+    pub fn read_bytes(&mut self, prefix_size: usize) -> Result<Subslice, VMError> {
+        if prefix_size > self.len() {
             return Err(VMError::FormatError);
         }
         let prefix = Subslice{
             start: self.start,
-            end: self.start+num_bytes,
+            end: self.start+prefix_size,
             whole: self.whole,
         };
-        self.start = self.start+num_bytes;
+        self.start = self.start+prefix_size;
         Ok(prefix)
     }
 

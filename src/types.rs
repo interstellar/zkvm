@@ -11,7 +11,6 @@ use crate::ops::Instruction;
 use crate::txlog::UTXO;
 use crate::errors::VMError;
 use crate::encoding::Subslice;
-use crate::predicate::Predicate;
 
 #[derive(Debug)]
 pub enum Item {
@@ -37,7 +36,7 @@ pub enum Program {
 
 #[derive(Debug)]
 pub enum Data {
-    Opaque(Range<usize>),
+    Opaque(Vec<u8>),
     Witness(DataWitness)
 }
 
@@ -190,24 +189,12 @@ impl Item{
 
 impl Data {
 
-
-        // /// Converts a bytestring to a 32-byte array
-    // pub fn to_u8x32(self) -> Result<[u8; 32], VMError> {
-    //     let mut buf = [0u8; 32];
-    //     buf.copy_from_slice(self.ensure_length(32)?.bytes);
-    //     Ok(buf)
-    // }
-
-    // /// Converts a bytestring to a compressed point
-    // pub fn to_point(self) -> Result<CompressedRistretto, VMError> {
-    //     Ok(CompressedRistretto(self.to_u8x32()?))
-    // }
-
-    pub fn to_predicate(self, program: &[u8]) -> Result<Predicate, VMError> {
+    /// Downcast to a Predicate type.
+    pub fn to_predicate(self) -> Result<Predicate, VMError> {
         match self {
-            Data::Opaque(range) => {
-                let data = Subslice::new_with_range(program, range)?;
-                Ok(Predicate::Opaque(data.read_point()?))
+            Data::Opaque(data) => {
+                let point = Subslice::new(&data).read_point()?;
+                Ok(Predicate::Opaque(point))
             }
             Data::Witness(witness) => {
                 match witness {
@@ -219,33 +206,33 @@ impl Data {
         }
     }
 
-    pub fn to_u8x32(self, program: &[u8]) ->Result<[u8; 32], VMError> {
-        let mut buf = [0u8; 32];
-        let range = self.ensure_length(32)?;
-        let prog_slice = program.get(range).ok_or(VMError::FormatError)?;
-        buf.copy_from_slice(prog_slice);
-        Ok(buf)
-    }
+    // pub fn to_u8x32(self, program: &[u8]) ->Result<[u8; 32], VMError> {
+    //     let mut buf = [0u8; 32];
+    //     let range = self.ensure_length(32)?;
+    //     let prog_slice = program.get(range).ok_or(VMError::FormatError)?;
+    //     buf.copy_from_slice(prog_slice);
+    //     Ok(buf)
+    // }
 
-    pub fn to_point(self, program: &[u8]) -> Result<CompressedRistretto, VMError> {
-        let point = match self {
-            Data::Opaque(_) => CompressedRistretto(self.to_u8x32(program)?),
-            Data::Witness(_) => unimplemented!(),
-        };
-        Ok(point)
-    }
+    // pub fn to_point(self, program: &[u8]) -> Result<CompressedRistretto, VMError> {
+    //     let point = match self {
+    //         Data::Opaque(_) => CompressedRistretto(self.to_u8x32(program)?),
+    //         Data::Witness(_) => unimplemented!(),
+    //     };
+    //     Ok(point)
+    // }
 
-    /// Ensures the length of the data string
-    pub fn ensure_length(self, len: usize) -> Result<Range<usize>, VMError> {
-        let range = match self {
-            Data::Opaque(range) => range,
-            Data::Witness(_) => return Err(VMError::DataNotOpaque)
-        };
-        if range.len() != len {
-            return Err(VMError::FormatError);
-        }
-        Ok(range)
-    }
+    // /// Ensures the length of the data string
+    // pub fn ensure_length(self, len: usize) -> Result<Range<usize>, VMError> {
+    //     let range = match self {
+    //         Data::Opaque(range) => range,
+    //         Data::Witness(_) => return Err(VMError::DataNotOpaque)
+    //     };
+    //     if range.len() != len {
+    //         return Err(VMError::FormatError);
+    //     }
+    //     Ok(range)
+    // }
 
     // /// Converts a bytestring to a 32-byte array
     // pub fn to_u8x32(self) -> Result<[u8; 32], VMError> {

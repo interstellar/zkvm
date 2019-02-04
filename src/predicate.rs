@@ -11,43 +11,46 @@ use merlin::Transcript;
 use crate::errors::VMError;
 use crate::point_ops::PointOp;
 use crate::transcript::TranscriptProtocol;
+use crate::types::Predicate;
 
 impl Predicate {
     /// Computes a disjunction of two predicates.
+    /// TBD: push this code into to_point() impl for the witness
     pub fn or(&self, right: &Predicate) -> Result<Predicate, VMError> {
         let mut t = Transcript::new(b"ZkVM.predicate");
         let gens = PedersenGens::default();
-        t.commit_point(b"L", &self.0);
-        t.commit_point(b"R", &right.0);
+        t.commit_point(b"L", &self.to_point());
+        t.commit_point(b"R", &right.to_point());
         let f = t.challenge_scalar(b"f");
-        let l = self.0.decompress().ok_or(VMError::InvalidPoint)?;
-        Ok(Predicate((l + f * gens.B).compress()))
+        let l = self.to_point().decompress().ok_or(VMError::InvalidPoint)?;
+        Ok(Predicate::Opaque((l + f * gens.B).compress()))
     }
 
     /// Verifies whether the current predicate is a disjunction of two others.
     /// Returns a `PointOp` instance that can be verified in a batch with other operations.
     pub fn prove_or(&self, left: &Predicate, right: &Predicate) -> PointOp {
         let mut t = Transcript::new(b"ZkVM.predicate");
-        t.commit_point(b"L", &left.0);
-        t.commit_point(b"R", &right.0);
+        t.commit_point(b"L", &left.to_point());
+        t.commit_point(b"R", &right.to_point());
         let f = t.challenge_scalar(b"f");
 
         // P == L + f*B   ->   0 == -P + L + f*B
         PointOp {
             primary: Some(f),
             secondary: None,
-            arbitrary: vec![(-Scalar::one(), self.0), (Scalar::one(), left.0)],
+            arbitrary: vec![(-Scalar::one(), self.to_point()), (Scalar::one(), left.to_point())],
         }
     }
 
     /// Creates a program-based predicate.
     /// One cannot sign for it as a public key because it’s using a secondary generator.
+    /// TBD: push this code into to_point() impl for the witness
     pub fn program_predicate(prog: &[u8]) -> Predicate {
         let mut t = Transcript::new(b"ZkVM.predicate");
         let gens = PedersenGens::default();
         t.commit_bytes(b"prog", &prog);
         let h = t.challenge_scalar(b"h");
-        Predicate((h * gens.B_blinding).compress())
+        Predicate::Opaque((h * gens.B_blinding).compress())
     }
 
     /// Verifies whether the current predicate is a commitment to a program `prog`.
@@ -61,7 +64,7 @@ impl Predicate {
         PointOp {
             primary: None,
             secondary: Some(h),
-            arbitrary: vec![(-Scalar::one(), self.0)],
+            arbitrary: vec![(-Scalar::one(), self.to_point())],
         }
     }
 }

@@ -128,8 +128,8 @@ impl Instruction {
         match opcode {
             Opcode::Push => {
                 let strlen = program.read_size()?;
-                let data = program.read_bytes(strlen)?;
-                Ok(Instruction::Push(Data::Opaque(data.range())))
+                let data_slice = program.read_bytes(strlen)?;
+                Ok(Instruction::Push(Data::Opaque(data_slice.to_vec())))
             }
             Opcode::Drop => Ok(Instruction::Drop),
             Opcode::Dup => {

@@ -98,7 +98,7 @@ pub enum Run {
     ProgramWitness(VecDeque<Instruction>),
 
     /// Verifier's running program is a slice into a tx.program
-    Program(Range<usize>)
+    Program(Vec<u8>, usize)
 }
 
 /// And indirect reference to a high-level variable within a constraint system.
@@ -126,27 +126,24 @@ pub trait VM {
 
     /// Returns the reference to the state object
     fn state(&mut self) -> &mut State<Self::CS>;
-    /// Issue instruction
-    fn issue(&mut self) -> Result<(), VMError>;
 
-    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
-
-    fn input(&mut self) -> Result<(), VMError>;
-
+    /// Provides the next instruction
     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
 
-    // For the verifier, tx_storage returns the tx program and for the prover,
-    // we return an empty slice.
-    fn tx_storage(&self) -> &[u8];
+
+    /// TBD???
+    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
+
+    
 }
 
 impl<CS: r1cs::ConstraintSystem> State<CS> {
 
-    pub fn new(
+    pub fn verifier_state(
         version: u64,
         mintime: u64,
         maxtime: u64,
-        program_range: Range<usize>,
+        program: Vec<u8>,
         cs: CS
     ) -> Self {
         State{
@@ -155,7 +152,7 @@ impl<CS: r1cs::ConstraintSystem> State<CS> {
             extension: version > CURRENT_VERSION,
             unique: false,
             stack: Vec::new(),
-            current_run: Run::Program(program_range),
+            current_run: Run::Program(program, 0),
             run_stack: Vec::new(),
             txlog: vec![Entry::Header(version, mintime, maxtime)],
             variable_commitments: Vec::new(),
@@ -301,7 +298,7 @@ pub trait VMInternal: VM {
 
     fn nonce(&mut self) -> Result<(), VMError> {
         let state = self.state();
-        let predicate = state.pop_item()?.to_data()?.to_predicate(self.tx_storage())?;
+        let predicate = state.pop_item()?.to_data()?.to_predicate()?;
         let contract = Contract {
             predicate,
             payload: Vec::new(),
@@ -312,6 +309,51 @@ pub trait VMInternal: VM {
         Ok(())
     }
     
+    fn issue(&mut self) -> Result<(), VMError> {
+        let state = self.state();
+        let predicate = Predicate(state.pop_item()?.to_data()?.to_point(&self.tx.program)?);
+        let flv = state.pop_item()?.to_variable()?;
+        let qty = state.pop_item()?.to_variable()?;
+
+        let (flv_point, _) = self.attach_variable(flv);
+        let (qty_point, _) = self.attach_variable(qty);
+
+        let value = Value { qty, flv };
+
+        let flv_scalar = Value::issue_flavor(&predicate);
+        // flv_point == flavor·B    ->   0 == -flv_point + flv_scalar·B
+        self.deferred_operations.push(PointOp {
+            primary: Some(flv_scalar),
+            secondary: None,
+            arbitrary: vec![(-Scalar::one(), flv_point)],
+        });
+
+        let qty_expr = self.variable_to_expression(qty);
+        self.add_range_proof(64, qty_expr)?;
+
+        state.txlog.push(Entry::Issue(qty_point, flv_point));
+
+        let contract = Contract {
+            predicate,
+            payload: vec![PortableItem::Value(value)],
+        };
+
+        state.push_item(contract);
+        Ok(())
+    }
+
+    /// _input_ **input** → _contract_
+    fn input(&mut self) -> Result<(), VMError> {
+        let state = self.state();
+        let serialized_input = state.pop_item()?.to_data()?;
+        let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
+        state.push_item(contract);
+        state.txlog.push(Entry::Input(utxo));
+        state.unique = true;
+        Ok(())
+    }
+
+
     fn retire(&mut self) -> Result<(), VMError> {
         let state = self.state();
         let value = state.pop_item()?.to_value()?;

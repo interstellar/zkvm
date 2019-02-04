@@ -75,10 +75,20 @@ impl<'t, 'g> Verifier<'t, 'g> {
         })
     }
     
-    pub fn current_run_subslice(&self) -> Result<Subslice, VMError> {
+    fn current_run_subslice(&self) -> Result<Subslice, VMError> {
         match self.state().current_run {
             Run::ProgramWitness(_) => Err(VMError::DataNotOpaque),
-            Run::Program(range) => Subslice::new_with_range(&self.tx.program, range)
+            Run::Program(prog, offset) => Subslice::new_with_range(&prog, offset..prog.len())
+        }
+    }
+
+    fn update_current_run(&mut self, offset: usize) -> Result<(), VMError> {
+        match &mut self.state().current_run {
+            Run::ProgramWitness(_) => Err(VMError::DataNotOpaque),
+            Run::Program(_, ref mut curr_offset) => {
+                *curr_offset = offset;
+                Ok(())
+            }
         }
     }
 
@@ -160,62 +170,18 @@ impl<'t, 'g> VM for Verifier<'t, 'g> {
     // program state pointer.
     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError> {
         let program = self.current_run_subslice()?;
+
+        // Reached the end of the program - no more instructions to execute.
         if program.len() == 0 {
             return Ok(None);
         }
+
         let instr = Instruction::parse(&mut program)?;
-        self.state().current_run = Run::Program(program.range());
+        self.update_current_run(program.range().start);
         Ok(Some(instr))
     }
-
-    fn tx_storage(&self) -> &[u8] {
-        &self.tx.program
-    }
-
-    fn issue(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let predicate = Predicate(state.pop_item()?.to_data()?.to_point(&self.tx.program)?);
-        let flv = state.pop_item()?.to_variable()?;
-        let qty = state.pop_item()?.to_variable()?;
-
-        let (flv_point, _) = self.attach_variable(flv);
-        let (qty_point, _) = self.attach_variable(qty);
-
-        let value = Value { qty, flv };
-
-        let flv_scalar = Value::issue_flavor(&predicate);
-        // flv_point == flavor·B    ->   0 == -flv_point + flv_scalar·B
-        self.deferred_operations.push(PointOp {
-            primary: Some(flv_scalar),
-            secondary: None,
-            arbitrary: vec![(-Scalar::one(), flv_point)],
-        });
-
-        let qty_expr = self.variable_to_expression(qty);
-        self.add_range_proof(64, qty_expr)?;
-
-        state.txlog.push(Entry::Issue(qty_point, flv_point));
-
-        let contract = Contract {
-            predicate,
-            payload: vec![PortableItem::Value(value)],
-        };
-
-        state.push_item(contract);
-        Ok(())
-    }
-
-    /// _input_ **input** → _contract_
-    fn input(&mut self) -> Result<(), VMError> {
-        let state = self.state();
-        let serialized_input = state.pop_item()?.to_data()?;
-        let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
-        state.push_item(contract);
-        state.txlog.push(Entry::Input(utxo));
-        state.unique = true;
-        Ok(())
-    }
-
+    
+    
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
         let state = self.state();
         let variable_commitment = state.variable_commitments[var.index];
