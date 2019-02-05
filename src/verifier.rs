@@ -1,4 +1,3 @@
-use crate::signature::VerificationKey;
 use bulletproofs::r1cs;
 use bulletproofs::{BulletproofGens, PedersenGens};
 use curve25519_dalek::ristretto::CompressedRistretto;
@@ -8,7 +7,7 @@ use crate::encoding::*;
 use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::point_ops::PointOp;
-use crate::signature::*;
+use crate::signature::VerificationKey;
 use crate::types::*;
 
 use crate::vm::{Delegate, RunTrait, Tx, VerifiedTx, VM};
@@ -43,11 +42,10 @@ impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier {
         self.deferred_operations.push(point_op_fn());
     }
 
-    fn sign_tx(&mut self, key: Key) -> Result<(), VMError> {
-        match key {
-            Key::Verification(k) => Ok(self.signtx_keys.push(k)),
-            Key::Signing(_) => Err(VMError::FormatError),
-        }
+    fn sign_tx(&mut self, pred: Predicate) {
+        // TOOD(vniu): check that predicate is Opaque, not Witness
+        let key = VerificationKey(pred.to_point());
+        self.signtx_keys.push(key)
     }
 }
 
@@ -97,20 +95,6 @@ impl Verifier {
         })
     }
 }
-
-// impl<'t, 'g> VM for Verifier<'t, 'g> {
-//     type CS = r1cs::Verifier<'t, 'g>;
-
-//     // // Unimplemented functions
-//     // fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
-//     //     let state = self.state();
-//     //     // This subscript never fails because the variable is created only via `make_variable`.
-//     //     match state.variable_commitments[var.index] {
-//     //         VariableCommitment::Detached(p) => p,
-//     //         VariableCommitment::Attached(p, _) => p,
-//     //     }
-//     // }
-// }
 
 impl Run {
     fn new(program: Vec<u8>) -> Self {

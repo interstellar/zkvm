@@ -216,6 +216,22 @@ impl Item {
 }
 
 impl Data {
+    // len returns the length of the data for purposes of
+    // allocating output.
+    pub fn len(&self) -> usize {
+        match self {
+            Data::Opaque(data) => data.len(),
+            Data::Witness(_) => unimplemented!(),
+        }
+    }
+
+    pub fn dup(&self) -> Result<Data, VMError> {
+        match self {
+            Data::Opaque(data) => Ok(Data::Opaque(data.to_vec())),
+            Data::Witness(_) => unimplemented!(),
+        }
+    }
+
     // Writes the type, length, and payload of the data
     // object to the target vector.
     pub fn write(&self, target: &mut Vec<u8>) {
@@ -225,13 +241,6 @@ impl Data {
                 encoding::write_u32(data.len() as u32, target);
                 encoding::write_bytes(&data, target)
             }
-            Data::Witness(_) => unimplemented!(),
-        }
-    }
-
-    pub fn dup(&self) -> Result<Data, VMError> {
-        match self {
-            Data::Opaque(data) => Ok(Data::Opaque(data.to_vec())),
             Data::Witness(_) => unimplemented!(),
         }
     }
@@ -271,6 +280,19 @@ impl Data {
                 _ => Err(VMError::TypeNotInput),
             },
         }
+    }
+}
+
+impl Contract {
+    pub fn output_size(&self) -> usize {
+        let mut size = 32 + 4;
+        for item in self.payload.iter() {
+            match item {
+                PortableItem::Data(d) => size += 1 + 4 + d.len(),
+                PortableItem::Value(_) => size += 1 + 64,
+            }
+        }
+        size
     }
 }
 

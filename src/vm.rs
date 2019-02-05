@@ -103,7 +103,7 @@ pub trait Delegate<CS: r1cs::ConstraintSystem> {
     where
         F: FnOnce() -> PointOp;
 
-    fn sign_tx(&mut self, key: Key) -> Result<(), VMError>;
+    fn sign_tx(&mut self, pred: Predicate);
 }
 
 /// A trait for an instance of a "run": a currently executed program.
@@ -352,47 +352,19 @@ where
 
     /// _items... predicate_ **output:_k_** → ø
     fn output(&mut self, k: usize) -> Result<(), VMError> {
-        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
-
-        if k > self.stack.len() {
-            return Err(VMError::StackUnderflow);
-        }
-
-        let payload = self
-            .stack
-            .drain(self.stack.len() - k..)
-            .map(|item| item.to_portable())
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let output = self.encode_output(Contract { predicate, payload });
+        let contract = self.pop_contract(k)?;
+        let output = self.encode_output(contract);
         self.txlog.push(Entry::Output(output));
         Ok(())
     }
 
     fn contract(&mut self, k: usize) -> Result<(), VMError> {
-        unimplemented!()
-
-        /*
-        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
-
-        if k > self.stack.len() {
-            return Err(VMError::StackUnderflow);
-        }
-        let payload = self
-            .stack
-            .drain(self.stack.len() - k..)
-            .map(|item| item.to_portable())
-            .collect::<Result<Vec<_>, _>>()?;
-
-        self.push_item(Contract { predicate, payload });
+        let contract = self.pop_contract(k)?;
+        self.push_item(contract);
         Ok(())
-        */
     }
 
     fn cloak(&mut self, m: usize, n: usize) -> Result<(), VMError> {
-        unimplemented!()
-
-        /*
         // _widevalues commitments_ **cloak:_m_:_n_** → _values_
         // Merges and splits `m` [wide values](#wide-value-type) into `n` [values](#values).
 
@@ -414,11 +386,11 @@ where
 
         // Make cloak outputs and output values using (qty,flv) commitments
         for _ in 0..n {
-            let flv = self.pop_item()?.to_data()?.to_point()?;
-            let qty = self.pop_item()?.to_data()?.to_point()?;
+            let flv = self.pop_item()?.to_data()?.to_commitment()?;
+            let qty = self.pop_item()?.to_data()?.to_commitment()?;
 
-            let qty = self.make_variable(qty);
             let flv = self.make_variable(flv);
+            let qty = self.make_variable(qty);
 
             let value = Value { qty, flv };
             let cloak_value = self.value_to_cloak_value(&value);
@@ -447,7 +419,6 @@ where
         }
 
         Ok(())
-        */
     }
 
     // Prover:
@@ -458,9 +429,7 @@ where
     // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
         let contract = self.pop_item()?.to_contract()?;
-        self.delegate.sign_tx(Key::Verification(VerificationKey(
-            contract.predicate.to_point(),
-        )))?;
+        self.delegate.sign_tx(contract.predicate);
         for item in contract.payload.into_iter() {
             self.push_item(item);
         }
@@ -597,7 +566,7 @@ where
     }
 
     fn encode_output(&mut self, contract: Contract) -> Vec<u8> {
-        let mut output = Vec::with_capacity(contract.payload.len());
+        let mut output = Vec::with_capacity(contract.output_size());
 
         encoding::write_point(&contract.predicate.to_point(), &mut output);
         encoding::write_u32(contract.payload.len() as u32, &mut output);
@@ -619,62 +588,50 @@ where
         }
         output
     }
-}
 
-/*
-UNIMPLEMENTED
+    fn pop_contract(&mut self, k: usize) -> Result<Contract, VMError> {
+        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
 
-fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
-    spacesuit::AllocatedValue {
-        q: self.attach_variable(value.qty).1,
-        f: self.attach_variable(value.flv).1,
-        // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
-        assignment: None,
-    }
-}
-
-fn wide_value_to_cloak_value(&mut self, walue: &WideValue) -> spacesuit::AllocatedValue {
-    spacesuit::AllocatedValue {
-        q: walue.r1cs_qty,
-        f: walue.r1cs_flv,
-        // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
-        assignment: None,
-    }
-}
-
-fn item_to_wide_value(&mut self, item: Item) -> Result<WideValue, VMError> {
-    match item {
-        Item::Value(value) => Ok(WideValue {
-            r1cs_qty: self.attach_variable(value.qty).1,
-            r1cs_flv: self.attach_variable(value.flv).1,
-        }),
-        Item::WideValue(w) => Ok(w),
-        _ => Err(VMError::TypeNotWideValue),
-    }
-}
-
-fn item_to_expression(&mut self, item: Item) -> Result<Expression, VMError> {
-    match item {
-        Item::Variable(v) => Ok(self.variable_to_expression(v)),
-        Item::Expression(expr) => Ok(expr),
-        _ => Err(VMError::TypeNotExpression),
-    }
-}
-
-*/
-
-/*
-impl Contract {
-    fn output_size(&self) -> usize {
-        let mut size = 32 + 4;
-        for item in self.payload.iter() {
-            match item {
-                PortableItem::Data(d) => size += 1 + 4 + d.bytes.len(),
-                PortableItem::Value(_) => size += 1 + 64,
-            }
+        if k > self.stack.len() {
+            return Err(VMError::StackUnderflow);
         }
-        size
+
+        let payload = self
+            .stack
+            .drain(self.stack.len() - k..)
+            .map(|item| item.to_portable())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Contract { predicate, payload })
+    }
+
+    fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
+        spacesuit::AllocatedValue {
+            q: self.attach_variable(value.qty).1,
+            f: self.attach_variable(value.flv).1,
+            // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
+            assignment: None,
+        }
+    }
+
+    fn item_to_wide_value(&mut self, item: Item) -> Result<WideValue, VMError> {
+        match item {
+            Item::Value(value) => Ok(WideValue {
+                r1cs_qty: self.attach_variable(value.qty).1,
+                r1cs_flv: self.attach_variable(value.flv).1,
+                witness: None,
+            }),
+            Item::WideValue(w) => Ok(w),
+            _ => Err(VMError::TypeNotWideValue),
+        }
+    }
+
+    fn wide_value_to_cloak_value(&mut self, walue: &WideValue) -> spacesuit::AllocatedValue {
+        spacesuit::AllocatedValue {
+            q: walue.r1cs_qty,
+            f: walue.r1cs_flv,
+            // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
+            assignment: None,
+        }
     }
 }
-
-*/
