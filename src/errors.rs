@@ -51,6 +51,10 @@ pub enum VMError {
     #[fail(display = "Item is not a commitment.")]
     TypeNotCommitment,
 
+    /// This error occurs when an instruction requires an input type.
+    #[fail(display = "Item is not an input.")]
+    TypeNotInput,
+
     /// This error occurs when an instruction requires a constraint type.
     #[fail(display = "Item is not a constraint.")]
     TypeNotConstraint,

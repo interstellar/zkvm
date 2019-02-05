@@ -14,10 +14,11 @@ use crate::errors::VMError;
 use crate::encoding::* ;
 use crate::ops::Instruction;
 
-use crate::vm::{VM,Tx,VerifiedTx,RunTrait,Runner};
+use crate::vm::{VM,Tx,VerifiedTx,RunTrait,Delegate};
 
 pub struct Verifier {
     signtx_keys: Vec<VerificationKey>,
+    deferred_operations: Vec<PointOp>,
 }
 
 struct Run {
@@ -25,11 +26,17 @@ struct Run {
     offset: usize,
 }
 
-impl Runner for Verifier {
+impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier {
     type RunType = Run;
 
-    fn commit_variable(&mut self, com: Commitment) -> (CompressedRistretto, r1cs::Variable) {
-        
+    fn commit_variable(&mut self, cs: r1cs::Verifier, com: Commitment) -> (CompressedRistretto, r1cs::Variable) {
+        let point = com.to_point();
+        let var = cs.commit(point);
+        (point, var)
+    }
+
+    fn verify_point_op<F>(&mut self, point_op_fn: F) where F: FnOnce() -> PointOp {
+        self.deferred_operations.push(point_op_fn());
     }
 }
 
@@ -42,13 +49,17 @@ impl Verifier {
         let pc_gens = PedersenGens::default();
         let cs = r1cs::Verifier::new(bp_gens, &pc_gens, &mut r1cs_transcript);
 
-        let mut verifier = Verifier {signtx_keys: Vec::new() };
+        let mut verifier = Verifier {
+            signtx_keys: Vec::new(),
+            deferred_operations: Vec::new(),
+        };
 
         let mut vm = VM::new(
             tx.version,
             tx.mintime,
             tx.maxtime,
             Run::new(tx.program),
+            verifier,
             cs,
         );
 
@@ -62,15 +73,15 @@ impl Verifier {
         verifier.deferred_operations.push(signtx_point_op);
 
         // Verify all deferred crypto operations.
-        PointOp::verify_batch(&vm.deferred_operations[..])?;
+        PointOp::verify_batch(&verifier.deferred_operations[..])?;
 
         // Verify the R1CS proof
-        vm.cs.verify(&self.tx.proof).map_err(|_| VMError::InvalidR1CSProof)?;
+        vm.cs.verify(&tx.proof).map_err(|_| VMError::InvalidR1CSProof)?;
 
         Ok(VerifiedTx {
-            version: self.tx.version,
-            mintime: self.tx.mintime,
-            maxtime: self.tx.maxtime,
+            version: tx.version,
+            mintime: tx.mintime,
+            maxtime: tx.maxtime,
             id: txid,
             log: vm.txlog,
         })

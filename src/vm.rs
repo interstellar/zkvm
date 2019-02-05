@@ -9,7 +9,7 @@ use merlin::Transcript;
 use spacesuit;
 use std::iter::FromIterator;
 
-use crate::encoding;
+use crate::encoding::Subslice;
 use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::point_ops::PointOp;
@@ -67,10 +67,10 @@ pub struct VerifiedTx {
     pub log: Vec<Entry>,
 }
 
-pub struct VM<CS, R>
+pub struct VM<CS, D>
 where 
 CS: r1cs::ConstraintSystem,
-R: Runner,
+D: Delegate<CS>,
 {
     mintime: u64,
     maxtime: u64,
@@ -86,20 +86,23 @@ R: Runner,
     // stack of all items in the VM
     stack: Vec<Item>,
 
-    runner: R,
+    delegate: D,
 
-    pub current_run: R::Run,
-    run_stack: Vec<R::Run>,
+    pub current_run: D::RunType,
+    run_stack: Vec<D::RunType>,
     pub txlog: Vec<Entry>,
     pub variable_commitments: Vec<VariableCommitment>,
     pub cs: CS,
-    pub deferred_operations: Vec<PointOp>,
 }
 
-pub trait Runner {
+pub trait Delegate<CS: r1cs::ConstraintSystem> {
     type RunType: RunTrait;
 
-    fn commit_variable(&mut self, com: Commitment) -> (CompressedRistretto, r1cs::Variable);
+    fn commit_variable(&mut self, cs: CS, com: Commitment) -> (CompressedRistretto, r1cs::Variable);
+
+    fn verify_point_op<F>(&mut self, point_op_fn: F)
+    where
+        F: FnOnce() -> PointOp;
 }
 
 /// A trait for an instance of a "run": a currently executed program.
@@ -157,17 +160,18 @@ pub struct VariableCommitment {
     
 // }
 
-impl<CS, R> VM<CS, R> 
+impl<CS, D> VM<CS, D> 
 where
 CS: r1cs::ConstraintSystem,
-R: RunTrait,
+D: Delegate<CS>,
 {
     /// Instantiates a new VM instance.
     pub fn new(
         version: u64,
         mintime: u64,
         maxtime: u64,
-        run: R,
+        run: D::RunType,
+        delegate: D,
         cs: CS
     ) -> Self {
         VM {
@@ -175,6 +179,7 @@ R: RunTrait,
             maxtime,
             extension: version > CURRENT_VERSION,
             unique: false,
+            delegate,
             stack: Vec::new(),
             current_run: run,
             run_stack: Vec::new(),
@@ -185,7 +190,7 @@ R: RunTrait,
     }
 
     /// Runs through the entire program and nested programs until completion.
-    fn run(&mut self) -> Result<TxID, VMError> {
+    pub fn run(&mut self) -> Result<TxID, VMError> {
         loop {
             if !self.step()? {
                 break;
@@ -333,16 +338,15 @@ R: RunTrait,
         let (flv_point, _) = self.attach_variable(flv);
         let (qty_point, _) = self.attach_variable(qty);
 
-        // Verify consistency between the predicate and the flavor point.
-        {
+        self.delegate.verify_point_op(|| {
             let flv_scalar = Value::issue_flavor(&predicate);
             // flv_point == flavor·B    ->   0 == -flv_point + flv_scalar·B
-            self.deferred_operations.push(PointOp {
+            PointOp {
                 primary: Some(flv_scalar),
                 secondary: None,
                 arbitrary: vec![(-Scalar::one(), flv_point)],
-            });
-        }
+            }
+        });
 
         let value = Value { qty, flv };
 
@@ -362,8 +366,8 @@ R: RunTrait,
 
     /// _input_ **input** → _contract_
     fn input(&mut self) -> Result<(), VMError> {
-        let serialized_input = self.pop_item()?.to_data()?;
-        let (contract, _, utxo) = self.decode_input(serialized_input.bytes)?;
+        let input = self.pop_item()?.to_data()?.to_input()?;
+        let (contract, utxo) = self.spend_input(input)?;
         self.push_item(contract);
         self.txlog.push(Entry::Input(utxo));
         self.unique = true;
@@ -495,7 +499,7 @@ R: RunTrait,
         }
     }
 
-    fn make_variable(&mut self, commitment: Commitment) -> Result<Variable, VMError> {
+    fn make_variable(&mut self, commitment: Commitment) -> Variable {
         let index = self.variable_commitments.len();
 
         self.variable_commitments.push(
@@ -504,7 +508,7 @@ R: RunTrait,
                 variable: None,
             }
         );
-        Ok(Variable { index })
+        Variable { index }
     }
 
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
@@ -515,9 +519,9 @@ R: RunTrait,
                 (v_com.commitment.to_point(), v)
             },
             None => {
-                let (point, var) = self.runner.commit_variable(v_com);
-                self.variable_commitments[var.index].variable = Some(var);
-                (point, var)
+                let (point, r1cs_var) = self.delegate.commit_variable(self.cs, v_com.commitment);
+                self.variable_commitments[var.index].variable = Some(r1cs_var);
+                (point, r1cs_var)
             },
         }
     }
@@ -556,6 +560,70 @@ R: RunTrait,
     pub fn pop_item(&mut self) -> Result<Item, VMError> {
         self.stack.pop().ok_or(VMError::StackUnderflow)
     }
+
+    fn spend_input(&mut self, input: Input) -> Result<(Contract, UTXO), VMError> {
+        match input {
+            Input::Opaque(data) => {
+                self.decode_input(data)
+            }
+            Input::Witness(w) => {
+                unimplemented!()
+            }
+        }
+    }
+
+    fn decode_input(&mut self, data: Vec<u8>) -> Result<(Contract, UTXO), VMError> {
+        // Input  =  PreviousTxID || PreviousOutput
+        // PreviousTxID  =  <32 bytes>
+        let slice = Subslice::new(&data);
+        let txid = TxID(slice.read_u8x32()?);
+        let output_slice = &slice;
+        let contract = self.decode_output(slice)?;
+        let utxo = UTXO::from_output(output_slice, &txid);
+        Ok((contract, utxo))
+    }
+
+    fn decode_output<'a>(&mut self, output: Subslice<'a>) -> Result<Contract, VMError> {
+        //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
+        // Predicate  =  <32 bytes>
+        //      Item  =  enum { Data, Value }
+        //      Data  =  0x00  ||  LE32(len)  ||  <bytes>
+        //     Value  =  0x01  ||  <32 bytes> ||  <32 bytes>
+
+        let predicate = Predicate::Opaque(output.read_point()?);
+        let k = output.read_size()?;
+
+        // sanity check: avoid allocating unreasonably more memory
+        // just because an untrusted length prefix says so.
+        if k > output.len() {
+            return Err(VMError::FormatError);
+        }
+
+        let mut payload: Vec<PortableItem> = Vec::with_capacity(k);
+        for _ in 0..k {
+            let item = match output.read_u8()? {
+                DATA_TYPE => {
+                    let len = output.read_size()?;
+                    let bytes = output.read_bytes(len)?;
+                    PortableItem::Data(Data::Opaque(bytes.to_vec()))
+                }
+                VALUE_TYPE => {
+                    let qty = output.read_point()?;
+                    let flv = output.read_point()?;
+
+                    let qty = self.make_variable(Commitment::Opaque(qty));
+                    let flv = self.make_variable(Commitment::Opaque(flv));
+
+                    PortableItem::Value(Value { qty, flv })
+                }
+                _ => return Err(VMError::FormatError),
+            };
+            payload.push(item);
+        }
+
+        Ok(Contract { predicate, payload })
+    }
+
 }
 
 
@@ -615,18 +683,6 @@ R: RunTrait,
         Expression {
             terms: vec![(r1cs_var, Scalar::one())],
         }
-    }
-
-    /// Parses the input and returns the instantiated contract, txid and UTXO identifier.
-    fn decode_input(&mut self, input: &'tx [u8]) -> Result<(Contract, TxID, UTXO), VMError> {
-        //        Input  =  PreviousTxID || PreviousOutput
-        // PreviousTxID  =  <32 bytes>
-
-        let (txid, output) = encoding::read_u8x32(input)?;
-        let txid = TxID(txid);
-        let contract = self.decode_output(output)?;
-        let utxo = UTXO::from_output(output, &txid);
-        Ok((contract, txid, utxo))
     }
 
     /// Parses the output and returns an instantiated contract.
