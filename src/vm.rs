@@ -103,7 +103,7 @@ pub trait Delegate<CS: r1cs::ConstraintSystem> {
     where
         F: FnOnce() -> PointOp;
 
-    fn sign_tx(&mut self, pred: Predicate);
+    fn process_tx_signature(&mut self, pred: Predicate) -> Result<(), VMError>;
 }
 
 /// A trait for an instance of a "run": a currently executed program.
@@ -429,7 +429,7 @@ where
     // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
         let contract = self.pop_item()?.to_contract()?;
-        self.delegate.sign_tx(contract.predicate);
+        self.delegate.process_tx_signature(contract.predicate)?;
         for item in contract.payload.into_iter() {
             self.push_item(item);
         }

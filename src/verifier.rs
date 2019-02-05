@@ -17,13 +17,13 @@ pub struct Verifier {
     deferred_operations: Vec<PointOp>,
 }
 
-pub struct Run {
+pub struct RunVerifier {
     program: Vec<u8>,
     offset: usize,
 }
 
 impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier {
-    type RunType = Run;
+    type RunType = RunVerifier;
 
     fn commit_variable(
         &mut self,
@@ -42,10 +42,11 @@ impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier {
         self.deferred_operations.push(point_op_fn());
     }
 
-    fn sign_tx(&mut self, pred: Predicate) {
-        // TOOD(vniu): check that predicate is Opaque, not Witness
-        let key = VerificationKey(pred.to_point());
-        self.signtx_keys.push(key)
+    fn process_tx_signature(&mut self, pred: Predicate) -> Result<(), VMError> {
+        match pred {
+            Predicate::Opaque(p) => Ok(self.signtx_keys.push(VerificationKey(p))),
+            Predicate::Witness(_) => Err(VMError::PredicateNotOpaque),
+        }
     }
 }
 
@@ -64,7 +65,7 @@ impl Verifier {
             tx.version,
             tx.mintime,
             tx.maxtime,
-            Run::new(tx.program),
+            RunVerifier::new(tx.program),
             verifier,
             cs,
         );
@@ -96,13 +97,13 @@ impl Verifier {
     }
 }
 
-impl Run {
+impl RunVerifier {
     fn new(program: Vec<u8>) -> Self {
-        Run { program, offset: 0 }
+        RunVerifier { program, offset: 0 }
     }
 }
 
-impl RunTrait for Run {
+impl RunTrait for RunVerifier {
     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError> {
         let mut program = Subslice::new_with_range(&self.program, self.offset..self.program.len())?;
 

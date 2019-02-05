@@ -67,6 +67,10 @@ pub enum VMError {
     #[fail(display = "Item is not a wide value.")]
     TypeNotWideValue,
 
+    /// This error occurs when an instruction expects a key type.
+    #[fail(display = "Item is not a key value.")]
+    TypeNotKeyValue,
+
     /// This error occurs when VM does not have enough items on the stack
     #[fail(display = "Stack does not have enough items")]
     StackUnderflow,
@@ -96,4 +100,7 @@ pub enum VMError {
 
     #[fail(display = "Data item must be opaque")]
     DataNotOpaque,
+
+    #[fail(display = "Predicate item must be opaque")]
+    PredicateNotOpaque,
 }

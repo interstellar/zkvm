@@ -157,10 +157,7 @@ mod tests {
     fn empty() {
         let mut transcript = Transcript::new(b"empty");
         let sig = Signature::sign_aggregated(&mut transcript, &[]);
-        assert!(sig
-            .verify_aggregated(&mut transcript, &mut Vec::new())
-            .verify()
-            .is_ok());
+        assert!(sig.verify_aggregated(&mut transcript, &[]).verify().is_ok());
     }
 
     #[test]
