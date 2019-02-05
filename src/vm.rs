@@ -1,11 +1,7 @@
-use core::ops::Range;
-use std::collections::vec_deque::VecDeque;
 use bulletproofs::r1cs;
 use bulletproofs::r1cs::R1CSProof;
-use bulletproofs::{BulletproofGens, PedersenGens};
-use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
+use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
-use merlin::Transcript;
 use spacesuit;
 use std::iter::FromIterator;
 
@@ -14,7 +10,6 @@ use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::point_ops::PointOp;
 use crate::signature::*;
-use crate::transcript::TranscriptProtocol;
 use crate::txlog::{Entry, TxID, UTXO};
 use crate::types::*;
 
@@ -26,7 +21,6 @@ pub const DATA_TYPE: u8 = 0x00;
 
 /// Prefix for the value type in the Output Structure
 pub const VALUE_TYPE: u8 = 0x01;
-
 
 /// Instance of a transaction that contains all necessary data to validate it.
 pub struct Tx {
@@ -68,9 +62,9 @@ pub struct VerifiedTx {
 }
 
 pub struct VM<CS, D>
-where 
-CS: r1cs::ConstraintSystem,
-D: Delegate<CS>,
+where
+    CS: r1cs::ConstraintSystem,
+    D: Delegate<CS>,
 {
     mintime: u64,
     maxtime: u64,
@@ -98,7 +92,11 @@ D: Delegate<CS>,
 pub trait Delegate<CS: r1cs::ConstraintSystem> {
     type RunType: RunTrait;
 
-    fn commit_variable(&mut self, cs: CS, com: Commitment) -> (CompressedRistretto, r1cs::Variable);
+    fn commit_variable(
+        &mut self,
+        cs: &mut CS,
+        com: &Commitment,
+    ) -> (CompressedRistretto, r1cs::Variable);
 
     fn verify_point_op<F>(&mut self, point_op_fn: F)
     where
@@ -114,17 +112,6 @@ pub trait RunTrait {
     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
 }
 
-// /// An state of running a single program string.
-// /// VM consists of a stack of such _Runs_.
-// /// The slices begin at the next instruction to be processed.
-// pub enum Run {
-//     /// Prover's running program
-//     ProgramWitness(VecDeque<Instruction>),
-
-//     /// Verifier's running program is a slice into a tx.program
-//     Program(Vec<u8>, usize)
-// }
-
 /// And indirect reference to a high-level variable within a constraint system.
 /// Variable types store index of such commitments that allows replacing them.
 pub struct VariableCommitment {
@@ -139,31 +126,10 @@ pub struct VariableCommitment {
     pub variable: Option<r1cs::Variable>,
 }
 
-// /// `VM` is a common trait for verifier's and prover's instances of ZkVM
-// /// that implements instructions generically.
-// pub trait Runner {
-//     /// Concrete type implementing CS API: r1cs::Verifier or r1cs::Prover
-//     type CS: r1cs::ConstraintSystem;
-
-//     type Run: RunTrait;
-
-//     /// Returns the reference to the state object
-//     fn state(&mut self) -> &mut State<Self::CS>;
-
-//     /// Provides the next instruction
-//     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
-
-
-//     /// TBD???
-//     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable);
-
-    
-// }
-
-impl<CS, D> VM<CS, D> 
+impl<CS, D> VM<CS, D>
 where
-CS: r1cs::ConstraintSystem,
-D: Delegate<CS>,
+    CS: r1cs::ConstraintSystem,
+    D: Delegate<CS>,
 {
     /// Instantiates a new VM instance.
     pub fn new(
@@ -172,7 +138,7 @@ D: Delegate<CS>,
         maxtime: u64,
         run: D::RunType,
         delegate: D,
-        cs: CS
+        cs: CS,
     ) -> Self {
         VM {
             mintime,
@@ -190,7 +156,7 @@ D: Delegate<CS>,
     }
 
     /// Runs through the entire program and nested programs until completion.
-    pub fn run(&mut self) -> Result<TxID, VMError> {
+    pub fn run(mut self) -> Result<(TxID, D, Vec<Entry>, CS), VMError> {
         loop {
             if !self.step()? {
                 break;
@@ -206,11 +172,11 @@ D: Delegate<CS>,
         }
 
         let txid = TxID::from_log(&self.txlog[..]);
-        
-        Ok(txid)
+
+        Ok((txid, self.delegate, self.txlog, self.cs))
     }
 
-    fn finish_run(&self) -> bool {
+    fn finish_run(&mut self) -> bool {
         // Do we have more programs to run?
         if let Some(run) = self.run_stack.pop() {
             // Continue with the previously remembered program
@@ -224,7 +190,7 @@ D: Delegate<CS>,
     /// Returns a flag indicating whether to continue the execution
     fn step(&mut self) -> Result<bool, VMError> {
         if let Some(instr) = self.current_run.next_instruction()? {
-        // if let Some(instr) = self.next_instruction()? {
+            // if let Some(instr) = self.next_instruction()? {
             // Attempt to read the next instruction and advance the program state
             match instr {
                 // the data is just a slice, so the clone would copy the slice struct,
@@ -299,7 +265,7 @@ D: Delegate<CS>,
         let item = match &self.stack[item_idx] {
             // Call some item method implemented for verifier/prover
             // item.dup_item()
-            Item::Data(x) => Item::Data(*x),
+            Item::Data(x) => Item::Data(x.dup()?),
             Item::Variable(x) => Item::Variable(x.clone()),
             Item::Expression(x) => Item::Expression(x.clone()),
             Item::Constraint(x) => Item::Constraint(x.clone()),
@@ -320,16 +286,17 @@ D: Delegate<CS>,
 
     fn nonce(&mut self) -> Result<(), VMError> {
         let predicate = self.pop_item()?.to_data()?.to_predicate()?;
+        let point = predicate.to_point();
         let contract = Contract {
             predicate,
             payload: Vec::new(),
         };
-        self.txlog.push(Entry::Nonce(predicate.to_point(), self.maxtime));
+        self.txlog.push(Entry::Nonce(point, self.maxtime));
         self.push_item(contract);
         self.unique = true;
         Ok(())
     }
-    
+
     fn issue(&mut self) -> Result<(), VMError> {
         let predicate = self.pop_item()?.to_data()?.to_predicate()?;
         let flv = self.pop_item()?.to_variable()?;
@@ -374,7 +341,6 @@ D: Delegate<CS>,
         Ok(())
     }
 
-
     fn retire(&mut self) -> Result<(), VMError> {
         let value = self.pop_item()?.to_value()?;
         let qty = self.get_variable_commitment(value.qty);
@@ -385,7 +351,10 @@ D: Delegate<CS>,
 
     /// _items... predicate_ **output:_k_** → ø
     fn output(&mut self, k: usize) -> Result<(), VMError> {
-        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
+        unimplemented!()
+
+        /*
+        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
 
         if k > self.stack.len() {
             return Err(VMError::StackUnderflow);
@@ -399,10 +368,14 @@ D: Delegate<CS>,
         let output = self.encode_output(Contract { predicate, payload });
         self.txlog.push(Entry::Output(output));
         Ok(())
+        */
     }
 
     fn contract(&mut self, k: usize) -> Result<(), VMError> {
-        let predicate = Predicate(self.pop_item()?.to_data()?.to_point()?);
+        unimplemented!()
+
+        /*
+        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
 
         if k > self.stack.len() {
             return Err(VMError::StackUnderflow);
@@ -415,9 +388,13 @@ D: Delegate<CS>,
 
         self.push_item(Contract { predicate, payload });
         Ok(())
+        */
     }
 
     fn cloak(&mut self, m: usize, n: usize) -> Result<(), VMError> {
+        unimplemented!()
+
+        /*
         // _widevalues commitments_ **cloak:_m_:_n_** → _values_
         // Merges and splits `m` [wide values](#wide-value-type) into `n` [values](#values).
 
@@ -472,6 +449,7 @@ D: Delegate<CS>,
         }
 
         Ok(())
+        */
     }
 
     // Prover:
@@ -481,12 +459,16 @@ D: Delegate<CS>,
     // Both: put the payload onto the stack.
     // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
+        unimplemented!()
+
+        /*
         let contract = self.pop_item()?.to_contract()?;
         self.signtx_keys.push(VerificationKey(contract.predicate.0));
         for item in contract.payload.into_iter() {
             self.push_item(item);
         }
         Ok(())
+        */
     }
 
     fn ext(&mut self, _: u8) -> Result<(), VMError> {
@@ -502,33 +484,31 @@ D: Delegate<CS>,
     fn make_variable(&mut self, commitment: Commitment) -> Variable {
         let index = self.variable_commitments.len();
 
-        self.variable_commitments.push(
-            VariableCommitment{
-                commitment: commitment,
-                variable: None,
-            }
-        );
+        self.variable_commitments.push(VariableCommitment {
+            commitment: commitment,
+            variable: None,
+        });
         Variable { index }
     }
 
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
         // This subscript never fails because the variable is created only via `make_variable`.
-        let v_com = self.variable_commitments[var.index];
+        let v_com = &self.variable_commitments[var.index];
         match v_com.variable {
-            Some(v) => {
-                (v_com.commitment.to_point(), v)
-            },
+            Some(v) => (v_com.commitment.to_point(), v),
             None => {
-                let (point, r1cs_var) = self.delegate.commit_variable(self.cs, v_com.commitment);
+                let (point, r1cs_var) = self
+                    .delegate
+                    .commit_variable(&mut self.cs, &v_com.commitment);
                 self.variable_commitments[var.index].variable = Some(r1cs_var);
                 (point, r1cs_var)
-            },
+            }
         }
     }
 
-    // Unimplemented functions
-     fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
-        unimplemented!();
+    fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
+        let var_com = &self.variable_commitments[var.index].commitment;
+        var_com.to_point()
     }
 
     // Utility functions
@@ -563,19 +543,15 @@ D: Delegate<CS>,
 
     fn spend_input(&mut self, input: Input) -> Result<(Contract, UTXO), VMError> {
         match input {
-            Input::Opaque(data) => {
-                self.decode_input(data)
-            }
-            Input::Witness(w) => {
-                unimplemented!()
-            }
+            Input::Opaque(data) => self.decode_input(data),
+            Input::Witness(w) => unimplemented!(),
         }
     }
 
     fn decode_input(&mut self, data: Vec<u8>) -> Result<(Contract, UTXO), VMError> {
         // Input  =  PreviousTxID || PreviousOutput
         // PreviousTxID  =  <32 bytes>
-        let slice = Subslice::new(&data);
+        let mut slice = Subslice::new(&data);
         let txid = TxID(slice.read_u8x32()?);
         let output_slice = &slice;
         let contract = self.decode_output(slice)?;
@@ -583,7 +559,7 @@ D: Delegate<CS>,
         Ok((contract, utxo))
     }
 
-    fn decode_output<'a>(&mut self, output: Subslice<'a>) -> Result<Contract, VMError> {
+    fn decode_output<'a>(&mut self, mut output: Subslice<'a>) -> Result<Contract, VMError> {
         //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
         // Predicate  =  <32 bytes>
         //      Item  =  enum { Data, Value }
@@ -623,154 +599,92 @@ D: Delegate<CS>,
 
         Ok(Contract { predicate, payload })
     }
-
 }
 
-
 /*
+UNIMPLEMENTED
 
-    fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
-        // This subscript never fails because the variable is created only via `make_variable`.
-        match self.variable_commitments[var.index] {
-            VariableCommitment::Detached(p) => {
-                let r1cs_var = self.cs.commit(p);
-                self.variable_commitments[var.index] = VariableCommitment::Attached(p, r1cs_var);
-                (p, r1cs_var)
+fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
+    spacesuit::AllocatedValue {
+        q: self.attach_variable(value.qty).1,
+        f: self.attach_variable(value.flv).1,
+        // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
+        assignment: None,
+    }
+}
+
+fn wide_value_to_cloak_value(&mut self, walue: &WideValue) -> spacesuit::AllocatedValue {
+    spacesuit::AllocatedValue {
+        q: walue.r1cs_qty,
+        f: walue.r1cs_flv,
+        // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
+        assignment: None,
+    }
+}
+
+fn item_to_wide_value(&mut self, item: Item) -> Result<WideValue, VMError> {
+    match item {
+        Item::Value(value) => Ok(WideValue {
+            r1cs_qty: self.attach_variable(value.qty).1,
+            r1cs_flv: self.attach_variable(value.flv).1,
+        }),
+        Item::WideValue(w) => Ok(w),
+        _ => Err(VMError::TypeNotWideValue),
+    }
+}
+
+fn item_to_expression(&mut self, item: Item) -> Result<Expression, VMError> {
+    match item {
+        Item::Variable(v) => Ok(self.variable_to_expression(v)),
+        Item::Expression(expr) => Ok(expr),
+        _ => Err(VMError::TypeNotExpression),
+    }
+}
+
+fn variable_to_expression(&mut self, var: Variable) -> Expression {
+    let (_, r1cs_var) = self.attach_variable(var);
+    Expression {
+        terms: vec![(r1cs_var, Scalar::one())],
+    }
+}
+
+fn encode_output(&mut self, contract: Contract) -> Vec<u8> {
+    let mut output = Vec::with_capacity(contract.output_size());
+    encoding::write_point(&contract.predicate.0, &mut output);
+    encoding::write_u32(contract.payload.len() as u32, &mut output);
+
+    for item in contract.payload.iter() {
+        match item {
+            PortableItem::Data(d) => {
+                encoding::write_u8(DATA_TYPE, &mut output);
+                encoding::write_u32(d.bytes.len() as u32, &mut output);
+                encoding::write_bytes(d.bytes, &mut output);
             }
-            VariableCommitment::Attached(p, r1cs_var) => (p, r1cs_var),
-        }
-    }
-
-    fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
-        spacesuit::AllocatedValue {
-            q: self.attach_variable(value.qty).1,
-            f: self.attach_variable(value.flv).1,
-            // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
-            assignment: None,
-        }
-    }
-
-    fn wide_value_to_cloak_value(&mut self, walue: &WideValue) -> spacesuit::AllocatedValue {
-        spacesuit::AllocatedValue {
-            q: walue.r1cs_qty,
-            f: walue.r1cs_flv,
-            // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
-            assignment: None,
-        }
-    }
-
-    fn item_to_wide_value(&mut self, item: Item) -> Result<WideValue, VMError> {
-        match item {
-            Item::Value(value) => Ok(WideValue {
-                r1cs_qty: self.attach_variable(value.qty).1,
-                r1cs_flv: self.attach_variable(value.flv).1,
-            }),
-            Item::WideValue(w) => Ok(w),
-            _ => Err(VMError::TypeNotWideValue),
-        }
-    }
-
-    fn item_to_expression(&mut self, item: Item) -> Result<Expression, VMError> {
-        match item {
-            Item::Variable(v) => Ok(self.variable_to_expression(v)),
-            Item::Expression(expr) => Ok(expr),
-            _ => Err(VMError::TypeNotExpression),
-        }
-    }
-
-    fn variable_to_expression(&mut self, var: Variable) -> Expression {
-        let (_, r1cs_var) = self.attach_variable(var);
-        Expression {
-            terms: vec![(r1cs_var, Scalar::one())],
-        }
-    }
-
-    /// Parses the output and returns an instantiated contract.
-    fn decode_output(&mut self, output: &'tx [u8]) -> Result<(Contract), VMError> {
-        //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
-        // Predicate  =  <32 bytes>
-        //      Item  =  enum { Data, Value }
-        //      Data  =  0x00  ||  LE32(len)  ||  <bytes>
-        //     Value  =  0x01  ||  <32 bytes> ||  <32 bytes>
-
-        let (predicate, payload) = encoding::read_point(output)?;
-        let predicate = Predicate(predicate);
-
-        let (k, mut items) = encoding::read_usize(payload)?;
-
-        // sanity check: avoid allocating unreasonably more memory
-        // just because an untrusted length prefix says so.
-        if k > items.len() {
-            return Err(VMError::FormatError);
-        }
-
-        let mut payload: Vec<PortableItem> = Vec::with_capacity(k);
-        for _ in 0..k {
-            let (item_type, rest) = encoding::read_u8(items)?;
-            let item = match item_type {
-                DATA_TYPE => {
-                    let (len, rest) = encoding::read_usize(rest)?;
-                    let (bytes, rest) = encoding::read_bytes(len, rest)?;
-                    items = rest;
-                    PortableItem::Data(Data { bytes })
-                }
-                VALUE_TYPE => {
-                    let (qty, rest) = encoding::read_point(rest)?;
-                    let (flv, rest) = encoding::read_point(rest)?;
-
-                    let qty = self.make_variable(qty);
-                    let flv = self.make_variable(flv);
-
-                    items = rest;
-                    PortableItem::Value(Value { qty, flv })
-                }
-                _ => return Err(VMError::FormatError),
-            };
-            payload.push(item);
-        }
-
-        Ok(Contract { predicate, payload })
-    }
-
-    fn encode_output(&mut self, contract: Contract) -> Vec<u8> {
-        let mut output = Vec::with_capacity(contract.output_size());
-        encoding::write_point(&contract.predicate.0, &mut output);
-        encoding::write_u32(contract.payload.len() as u32, &mut output);
-
-        for item in contract.payload.iter() {
-            match item {
-                PortableItem::Data(d) => {
-                    encoding::write_u8(DATA_TYPE, &mut output);
-                    encoding::write_u32(d.bytes.len() as u32, &mut output);
-                    encoding::write_bytes(d.bytes, &mut output);
-                }
-                PortableItem::Value(v) => {
-                    encoding::write_u8(VALUE_TYPE, &mut output);
-                    let qty = self.get_variable_commitment(v.qty);
-                    let flv = self.get_variable_commitment(v.flv);
-                    encoding::write_point(&qty, &mut output);
-                    encoding::write_point(&flv, &mut output);
-                }
+            PortableItem::Value(v) => {
+                encoding::write_u8(VALUE_TYPE, &mut output);
+                let qty = self.get_variable_commitment(v.qty);
+                let flv = self.get_variable_commitment(v.flv);
+                encoding::write_point(&qty, &mut output);
+                encoding::write_point(&flv, &mut output);
             }
         }
-
-        output
     }
 
-    fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
-        spacesuit::range_proof(
-            &mut self.cs,
-            r1cs::LinearCombination::from_iter(expr.terms),
-            // TBD: maintain the assignment for the expression and provide it here
-            None,
-            bitrange,
-        )
-        .map_err(|_| VMError::R1CSInconsistency)
-    }
+    output
+}
 
-    */
+fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
+    spacesuit::range_proof(
+        &mut self.cs,
+        r1cs::LinearCombination::from_iter(expr.terms),
+        // TBD: maintain the assignment for the expression and provide it here
+        None,
+        bitrange,
+    )
+    .map_err(|_| VMError::R1CSInconsistency)
+}
 
-
+*/
 
 /*
 impl Contract {

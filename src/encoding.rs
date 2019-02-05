@@ -3,13 +3,13 @@
 
 use byteorder::{ByteOrder, LittleEndian};
 use core::ops::Range;
-use std::ops::Deref;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
+use std::ops::Deref;
 
 use crate::errors::VMError;
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Subslice<'a> {
     whole: &'a [u8],
     start: usize,
@@ -18,7 +18,7 @@ pub struct Subslice<'a> {
 
 impl<'a> Subslice<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        Subslice{
+        Subslice {
             start: 0,
             end: data.len(),
             whole: data,
@@ -27,9 +27,9 @@ impl<'a> Subslice<'a> {
 
     pub fn new_with_range(data: &'a [u8], range: Range<usize>) -> Result<Self, VMError> {
         if range.end > data.len() || range.start > data.len() {
-            return Err(VMError::FormatError)
+            return Err(VMError::FormatError);
         }
-        Ok(Subslice{
+        Ok(Subslice {
             start: range.start,
             end: range.end,
             whole: data,
@@ -46,7 +46,7 @@ impl<'a> Subslice<'a> {
 
     /// Copies the contents of the subslice into a `Vec<u8>`.
     pub fn to_vec(&self) -> Vec<u8> {
-        let buf = Vec::with_capacity(self.len());
+        let mut buf = Vec::with_capacity(self.len());
         buf.extend_from_slice(&self);
         buf
     }
@@ -57,12 +57,12 @@ impl<'a> Subslice<'a> {
         if prefix_size > self.len() {
             return Err(VMError::FormatError);
         }
-        let prefix = Subslice{
+        let prefix = Subslice {
             start: self.start,
-            end: self.start+prefix_size,
+            end: self.start + prefix_size,
             whole: self.whole,
         };
-        self.start = self.start+prefix_size;
+        self.start = self.start + prefix_size;
         Ok(prefix)
     }
 
@@ -91,7 +91,7 @@ impl<'a> Subslice<'a> {
     }
 
     pub fn read_point(&mut self) -> Result<CompressedRistretto, VMError> {
-        let buf  = self.read_u8x32()?;
+        let buf = self.read_u8x32()?;
         Ok(CompressedRistretto(buf))
     }
 

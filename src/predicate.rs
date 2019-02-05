@@ -4,7 +4,6 @@
 //! - disjunction: P = L + f(L,R)*B
 //! - program_commitment: P = h(prog)*B2
 use bulletproofs::PedersenGens;
-use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
@@ -38,7 +37,10 @@ impl Predicate {
         PointOp {
             primary: Some(f),
             secondary: None,
-            arbitrary: vec![(-Scalar::one(), self.to_point()), (Scalar::one(), left.to_point())],
+            arbitrary: vec![
+                (-Scalar::one(), self.to_point()),
+                (Scalar::one(), left.to_point()),
+            ],
         }
     }
 
@@ -95,8 +97,8 @@ mod tests {
         let gens = PedersenGens::default();
 
         // dummy predicates
-        let left = Predicate(gens.B.compress());
-        let right = Predicate(gens.B_blinding.compress());
+        let left = Predicate::Opaque(gens.B.compress());
+        let right = Predicate::Opaque(gens.B_blinding.compress());
 
         let pred = left.or(&right).unwrap();
         let op = pred.prove_or(&left, &right);
@@ -108,10 +110,10 @@ mod tests {
         let gens = PedersenGens::default();
 
         // dummy predicates
-        let left = Predicate(gens.B.compress());
-        let right = Predicate(gens.B_blinding.compress());
+        let left = Predicate::Opaque(gens.B.compress());
+        let right = Predicate::Opaque(gens.B_blinding.compress());
 
-        let pred = left.clone();
+        let pred = Predicate::Opaque(gens.B.compress());
         let op = pred.prove_or(&left, &right);
         assert!(op.verify().is_err());
     }
@@ -121,8 +123,8 @@ mod tests {
         let gens = PedersenGens::default();
 
         // dummy predicates
-        let left = Predicate(gens.B.compress());
-        let right = Predicate(gens.B_blinding.compress());
+        let left = Predicate::Opaque(gens.B.compress());
+        let right = Predicate::Opaque(gens.B_blinding.compress());
 
         let pred = left.or(&right).unwrap();
         let op = pred.prove_or(&right, &left);

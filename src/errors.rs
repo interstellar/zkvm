@@ -91,7 +91,6 @@ pub enum VMError {
     #[fail(display = "R1CS detected inconsistent input")]
     R1CSInconsistency,
 
-
     #[fail(display = "Item misses witness data.")]
     WitnessMissing,
 

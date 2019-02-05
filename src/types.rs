@@ -1,17 +1,16 @@
 //! Core ZkVM stack types: data, variables, values, contracts etc.
 
-use core::ops::Range;
 use crate::transcript::TranscriptProtocol;
-use bulletproofs::r1cs;
+use bulletproofs::{r1cs, PedersenGens};
+use core::ops::Range;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
+use crate::encoding::Subslice;
+use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::txlog::UTXO;
-use crate::errors::VMError;
-use crate::encoding::Subslice;
-use crate::vm::VM;
 
 #[derive(Debug)]
 pub enum Item {
@@ -33,12 +32,12 @@ pub enum PortableItem {
 #[derive(Debug)]
 pub enum Data {
     Opaque(Vec<u8>),
-    Witness(DataWitness)
+    Witness(DataWitness),
 }
 
 pub enum Program {
     Opaque(Range<usize>),
-    Witness(Vec<Instruction>)
+    Witness(Vec<Instruction>),
 }
 
 #[derive(Debug)]
@@ -57,7 +56,7 @@ pub struct Value {
 pub struct WideValue {
     pub(crate) r1cs_qty: r1cs::Variable,
     pub(crate) r1cs_flv: r1cs::Variable,
-    pub(crate) witness: Option<(Scalar, Scalar)>
+    pub(crate) witness: Option<(Scalar, Scalar)>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -74,7 +73,7 @@ pub struct Expression {
 
 #[derive(Clone, Debug)]
 pub enum Constraint {
-    Eq(Expression,Expression),
+    Eq(Expression, Expression),
     And(Vec<Constraint>),
     Or(Vec<Constraint>),
     // no witness needed as it's normally true/false and we derive it on the fly during processing.
@@ -87,16 +86,16 @@ pub enum Predicate {
     Witness(Box<PredicateWitness>),
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub enum Commitment {
     Opaque(CompressedRistretto),
     Open(Box<CommitmentWitness>),
 }
 
 #[derive(Debug)]
-pub enum Input{
+pub enum Input {
     Opaque(Vec<u8>),
-    Witness(Box<(Contract,UTXO)>),
+    Witness(Box<(Contract, UTXO)>),
 }
 
 /// Prover's representation of the witness.
@@ -124,7 +123,7 @@ impl PredicateWitness {
 }
 
 /// Prover's representation of the commitment secret: witness and blinding factor
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct CommitmentWitness {
     value: Scalar,
     blinding: Scalar,
@@ -143,7 +142,7 @@ impl Predicate {
     pub fn to_point(&self) -> CompressedRistretto {
         match self {
             Predicate::Opaque(point) => *point,
-            Predicate::Witness(witness) => witness.to_point(), 
+            Predicate::Witness(witness) => witness.to_point(),
         }
     }
 }
@@ -155,8 +154,7 @@ impl CommitmentWitness {
     }
 }
 
-impl Item{
- 
+impl Item {
     // Downcasts to Data type
     pub fn to_data(self) -> Result<Data, VMError> {
         match self {
@@ -198,7 +196,6 @@ impl Item{
         }
     }
 
-
     // Downcasts to WideValue type (Value is NOT casted to WideValue)
     pub fn to_wide_value(self) -> Result<WideValue, VMError> {
         match self {
@@ -217,6 +214,12 @@ impl Item{
 }
 
 impl Data {
+    pub fn dup(&self) -> Result<Data, VMError> {
+        match self {
+            Data::Opaque(data) => Ok(Data::Opaque(data.to_vec())),
+            Data::Witness(_) => Err(VMError::DataNotOpaque),
+        }
+    }
 
     /// Downcast to a Predicate type.
     pub fn to_predicate(self) -> Result<Predicate, VMError> {
@@ -225,13 +228,10 @@ impl Data {
                 let point = Subslice::new(&data).read_point()?;
                 Ok(Predicate::Opaque(point))
             }
-            Data::Witness(witness) => {
-                match witness {
-                    DataWitness::Predicate(w) => Ok(Predicate::Witness(w)),
-                    _ => Err(VMError::TypeNotPredicate),
-                }
-            }
-            
+            Data::Witness(witness) => match witness {
+                DataWitness::Predicate(w) => Ok(Predicate::Witness(w)),
+                _ => Err(VMError::TypeNotPredicate),
+            },
         }
     }
 
@@ -241,193 +241,30 @@ impl Data {
                 let point = Subslice::new(&data).read_point()?;
                 Ok(Commitment::Opaque(point))
             }
-            Data::Witness(witness) => {
-                match witness {
-                    DataWitness::Commitment(w) => Ok(Commitment::Open(w)),
-                    _ => Err(VMError::TypeNotCommitment),
-                }
-            }
+            Data::Witness(witness) => match witness {
+                DataWitness::Commitment(w) => Ok(Commitment::Open(w)),
+                _ => Err(VMError::TypeNotCommitment),
+            },
         }
     }
 
     pub fn to_input(self) -> Result<Input, VMError> {
         match self {
-            Data::Opaque(data) => {
-                Ok(Input::Opaque(data))
-            }
-            Data::Witness(witness) => {
-                match witness {
-                    DataWitness::Input(w) => Ok(Input::Witness(w)),
-                    _ => Err(VMError::TypeNotInput),
-                }
-            }
+            Data::Opaque(data) => Ok(Input::Opaque(data)),
+            Data::Witness(witness) => match witness {
+                DataWitness::Input(w) => Ok(Input::Witness(w)),
+                _ => Err(VMError::TypeNotInput),
+            },
         }
     }
-
-    // pub fn to_u8x32(self, program: &[u8]) ->Result<[u8; 32], VMError> {
-    //     let mut buf = [0u8; 32];
-    //     let range = self.ensure_length(32)?;
-    //     let prog_slice = program.get(range).ok_or(VMError::FormatError)?;
-    //     buf.copy_from_slice(prog_slice);
-    //     Ok(buf)
-    // }
-
-    // pub fn to_point(self, program: &[u8]) -> Result<CompressedRistretto, VMError> {
-    //     let point = match self {
-    //         Data::Opaque(_) => CompressedRistretto(self.to_u8x32(program)?),
-    //         Data::Witness(_) => unimplemented!(),
-    //     };
-    //     Ok(point)
-    // }
-
-    // /// Ensures the length of the data string
-    // pub fn ensure_length(self, len: usize) -> Result<Range<usize>, VMError> {
-    //     let range = match self {
-    //         Data::Opaque(range) => range,
-    //         Data::Witness(_) => return Err(VMError::DataNotOpaque)
-    //     };
-    //     if range.len() != len {
-    //         return Err(VMError::FormatError);
-    //     }
-    //     Ok(range)
-    // }
-
-    // /// Converts a bytestring to a 32-byte array
-    // pub fn to_u8x32(self) -> Result<[u8; 32], VMError> {
-    //     let mut buf = [0u8; 32];
-    //     buf.copy_from_slice(self.ensure_length(32)?.bytes);
-    //     Ok(buf)
-    // }
-
-    // /// Converts a bytestring to a compressed point
-    // pub fn to_point(self) -> Result<CompressedRistretto, VMError> {
-    //     Ok(CompressedRistretto(self.to_u8x32()?))
-    // }
-
-    // /// Converts a bytestring to a canonical scalar
-    // pub fn to_scalar(self) -> Result<Scalar, VMError> {
-    //     Scalar::from_canonical_bytes(self.to_u8x32()?).ok_or(VMError::FormatError)
-    // }
 }
 
 impl Value {
     /// Computes a flavor as defined by the `issue` instruction from a predicate.
     pub fn issue_flavor(predicate: &Predicate) -> Scalar {
         let mut t = Transcript::new(b"ZkVM.issue");
-        t.commit_bytes(b"predicate", predicate.0.as_bytes());
+        t.commit_bytes(b"predicate", predicate.to_point().as_bytes());
         t.challenge_scalar(b"flavor")
-    }
-}
-
-impl Input {
-    pub fn spend<CS, D> (self, vm: &mut VM<CS, D>) -> Result<(Contract, UTXO), VMError> {
-        match self {
-            Opaque(data) => {
-                Self::decode_input(vm, data)
-            }
-            Witness(w) => {
-                unimplemented!()
-            }
-        }
-    }
-
-    fn decode_input(vm: &mut VM, data: Vec<u8>) -> Result<(Contract, UTXO), VMError> {
-        let slice = Subslice::new(&data);
-        let txid = TxID(slice.read_u8x32()?);
-        let contract = Self::decode_output(slice)?;
-        let utxo = UTXO::from_output(slice, &txid);
-        Ok((contract, utxo))
-    }
-
-    fn decode_output<'a>(output: Subslice<'a>) -> Result<(Contract), VMError> {
-        //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
-        // Predicate  =  <32 bytes>
-        //      Item  =  enum { Data, Value }
-        //      Data  =  0x00  ||  LE32(len)  ||  <bytes>
-        //     Value  =  0x01  ||  <32 bytes> ||  <32 bytes>
-
-        let predicate = Predicate(output.read_point(output)?);
-        let k = output.read_size()?;
-
-        // sanity check: avoid allocating unreasonably more memory
-        // just because an untrusted length prefix says so.
-        if k > output.len() {
-            return Err(VMError::FormatError);
-        }
-
-        let mut payload: Vec<PortableItem> = Vec::with_capacity(k);
-        for _ in 0..k {
-            let item = match output.read_u8()? {
-                DATA_TYPE => {
-                    let len = output.read_size()?;
-                    let bytes = output.read_bytes(len)?;
-                    PortableItem::Data(Data { bytes })
-                }
-                VALUE_TYPE => {
-                    let qty = output.read_point()?;
-                    let flv = output.read_point()?;
-
-                    let qty = self.make_variable(qty);
-                    let flv = self.make_variable(flv);
-
-                    items = rest;
-                    PortableItem::Value(Value { qty, flv })
-                }
-                _ => return Err(VMError::FormatError),
-            };
-            payload.push(item);
-        }
-
-        Ok(Contract { predicate, payload })
-    }
-
-    /// Parses the output and returns an instantiated contract.
-    fn decode_output(&mut self, output: &[u8]) -> Result<(Contract), VMError> {
-        //    Output  =  Predicate  ||  LE32(k)  ||  Item[0]  || ... ||  Item[k-1]
-        // Predicate  =  <32 bytes>
-        //      Item  =  enum { Data, Value }
-        //      Data  =  0x00  ||  LE32(len)  ||  <bytes>
-        //     Value  =  0x01  ||  <32 bytes> ||  <32 bytes>
-
-        let (predicate, payload) = encoding::read_point(output)?;
-        let predicate = Predicate(predicate);
-
-        let (k, mut items) = encoding::read_usize(payload)?;
-
-        // sanity check: avoid allocating unreasonably more memory
-        // just because an untrusted length prefix says so.
-        if k > items.len() {
-            return Err(VMError::FormatError);
-        }
-
-        // TODO: replace the slices themselves with a tracking of the indices.
-
-        let mut payload: Vec<PortableItem> = Vec::with_capacity(k);
-        for _ in 0..k {
-            let (item_type, rest) = encoding::read_u8(items)?;
-            let item = match item_type {
-                DATA_TYPE => {
-                    let (len, rest) = encoding::read_usize(rest)?;
-                    let (bytes, rest) = encoding::read_bytes(len, rest)?;
-                    items = rest;
-                    PortableItem::Data(Data { bytes })
-                }
-                VALUE_TYPE => {
-                    let (qty, rest) = encoding::read_point(rest)?;
-                    let (flv, rest) = encoding::read_point(rest)?;
-
-                    let qty = self.make_variable(qty);
-                    let flv = self.make_variable(flv);
-
-                    items = rest;
-                    PortableItem::Value(Value { qty, flv })
-                }
-                _ => return Err(VMError::FormatError),
-            };
-            payload.push(item);
-        }
-
-        Ok(Contract { predicate, payload })
     }
 }
 

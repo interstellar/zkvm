@@ -1,10 +1,8 @@
-use core::ops::Range;
-use byteorder::{ByteOrder, LittleEndian};
 use core::mem;
 
-use crate::types::Data;
-use crate::errors::VMError;
 use crate::encoding::Subslice;
+use crate::errors::VMError;
+use crate::types::Data;
 
 #[derive(Debug)]
 pub enum Instruction {
