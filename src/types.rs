@@ -218,7 +218,7 @@ impl Item {
 impl Data {
     // len returns the length of the data for purposes of
     // allocating output.
-    pub fn len(&self) -> usize {
+    pub fn exact_output_size(&self) -> usize {
         match self {
             Data::Opaque(data) => data.len(),
             Data::Witness(_) => unimplemented!(),
@@ -271,11 +271,11 @@ impl Data {
 }
 
 impl Contract {
-    pub fn output_size(&self) -> usize {
+    pub fn exact_output_size(&self) -> usize {
         let mut size = 32 + 4;
         for item in self.payload.iter() {
             match item {
-                PortableItem::Data(d) => size += 1 + 4 + d.len(),
+                PortableItem::Data(d) => size += 1 + 4 + d.exact_output_size(),
                 PortableItem::Value(_) => size += 1 + 64,
             }
         }

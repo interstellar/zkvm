@@ -560,7 +560,7 @@ where
     }
 
     fn encode_output(&mut self, contract: Contract) -> Vec<u8> {
-        let mut output = Vec::with_capacity(contract.output_size());
+        let mut output = Vec::with_capacity(contract.exact_output_size());
 
         encoding::write_point(&contract.predicate.to_point(), &mut output);
         encoding::write_u32(contract.payload.len() as u32, &mut output);
