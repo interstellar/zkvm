@@ -97,7 +97,7 @@ impl<'a> Subslice<'a> {
 
     pub fn read_scalar(&mut self) -> Result<Scalar, VMError> {
         let buf = self.read_u8x32()?;
-        Ok(Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)?)
+        Scalar::from_canonical_bytes(buf).ok_or(VMError::FormatError)
     }
 }
 
