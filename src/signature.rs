@@ -149,6 +149,12 @@ impl VerificationKey {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Key {
+    Verification(VerificationKey),
+    Signing(Scalar),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

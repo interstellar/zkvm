@@ -7,10 +7,12 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
 
+use crate::encoding;
 use crate::encoding::Subslice;
 use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::txlog::UTXO;
+use crate::vm;
 
 #[derive(Debug)]
 pub enum Item {
@@ -214,10 +216,23 @@ impl Item {
 }
 
 impl Data {
+    // Writes the type, length, and payload of the data
+    // object to the target vector.
+    pub fn write(&self, target: &mut Vec<u8>) {
+        match self {
+            Data::Opaque(data) => {
+                encoding::write_u8(vm::DATA_TYPE, target);
+                encoding::write_u32(data.len() as u32, target);
+                encoding::write_bytes(&data, target)
+            }
+            Data::Witness(_) => unimplemented!(),
+        }
+    }
+
     pub fn dup(&self) -> Result<Data, VMError> {
         match self {
             Data::Opaque(data) => Ok(Data::Opaque(data.to_vec())),
-            Data::Witness(_) => Err(VMError::DataNotOpaque),
+            Data::Witness(_) => unimplemented!(),
         }
     }
 

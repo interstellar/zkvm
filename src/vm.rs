@@ -5,6 +5,7 @@ use curve25519_dalek::scalar::Scalar;
 use spacesuit;
 use std::iter::FromIterator;
 
+use crate::encoding;
 use crate::encoding::Subslice;
 use crate::errors::VMError;
 use crate::ops::Instruction;
@@ -101,6 +102,8 @@ pub trait Delegate<CS: r1cs::ConstraintSystem> {
     fn verify_point_op<F>(&mut self, point_op_fn: F)
     where
         F: FnOnce() -> PointOp;
+
+    fn sign_tx(&mut self, key: Key) -> Result<(), VMError>;
 }
 
 /// A trait for an instance of a "run": a currently executed program.
@@ -263,8 +266,6 @@ where
         }
         let item_idx = self.stack.len() - i - 1;
         let item = match &self.stack[item_idx] {
-            // Call some item method implemented for verifier/prover
-            // item.dup_item()
             Item::Data(x) => Item::Data(x.dup()?),
             Item::Variable(x) => Item::Variable(x.clone()),
             Item::Expression(x) => Item::Expression(x.clone()),
@@ -351,14 +352,12 @@ where
 
     /// _items... predicate_ **output:_k_** → ø
     fn output(&mut self, k: usize) -> Result<(), VMError> {
-        unimplemented!()
-
-        /*
         let predicate = self.pop_item()?.to_data()?.to_predicate()?;
 
         if k > self.stack.len() {
             return Err(VMError::StackUnderflow);
         }
+
         let payload = self
             .stack
             .drain(self.stack.len() - k..)
@@ -368,7 +367,6 @@ where
         let output = self.encode_output(Contract { predicate, payload });
         self.txlog.push(Entry::Output(output));
         Ok(())
-        */
     }
 
     fn contract(&mut self, k: usize) -> Result<(), VMError> {
@@ -459,16 +457,14 @@ where
     // Both: put the payload onto the stack.
     // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
-        unimplemented!()
-
-        /*
         let contract = self.pop_item()?.to_contract()?;
-        self.signtx_keys.push(VerificationKey(contract.predicate.0));
+        self.delegate.sign_tx(Key::Verification(VerificationKey(
+            contract.predicate.to_point(),
+        )))?;
         for item in contract.payload.into_iter() {
             self.push_item(item);
         }
         Ok(())
-        */
     }
 
     fn ext(&mut self, _: u8) -> Result<(), VMError> {
@@ -599,6 +595,30 @@ where
 
         Ok(Contract { predicate, payload })
     }
+
+    fn encode_output(&mut self, contract: Contract) -> Vec<u8> {
+        let mut output = Vec::with_capacity(contract.payload.len());
+
+        encoding::write_point(&contract.predicate.to_point(), &mut output);
+        encoding::write_u32(contract.payload.len() as u32, &mut output);
+
+        // can move all the write functions into type impl
+        for item in contract.payload.iter() {
+            match item {
+                PortableItem::Data(d) => {
+                    d.write(&mut output);
+                }
+                PortableItem::Value(v) => {
+                    encoding::write_u8(VALUE_TYPE, &mut output);
+                    let qty = self.get_variable_commitment(v.qty);
+                    let flv = self.get_variable_commitment(v.flv);
+                    encoding::write_point(&qty, &mut output);
+                    encoding::write_point(&flv, &mut output);
+                }
+            }
+        }
+        output
+    }
 }
 
 /*
@@ -639,49 +659,6 @@ fn item_to_expression(&mut self, item: Item) -> Result<Expression, VMError> {
         Item::Expression(expr) => Ok(expr),
         _ => Err(VMError::TypeNotExpression),
     }
-}
-
-fn variable_to_expression(&mut self, var: Variable) -> Expression {
-    let (_, r1cs_var) = self.attach_variable(var);
-    Expression {
-        terms: vec![(r1cs_var, Scalar::one())],
-    }
-}
-
-fn encode_output(&mut self, contract: Contract) -> Vec<u8> {
-    let mut output = Vec::with_capacity(contract.output_size());
-    encoding::write_point(&contract.predicate.0, &mut output);
-    encoding::write_u32(contract.payload.len() as u32, &mut output);
-
-    for item in contract.payload.iter() {
-        match item {
-            PortableItem::Data(d) => {
-                encoding::write_u8(DATA_TYPE, &mut output);
-                encoding::write_u32(d.bytes.len() as u32, &mut output);
-                encoding::write_bytes(d.bytes, &mut output);
-            }
-            PortableItem::Value(v) => {
-                encoding::write_u8(VALUE_TYPE, &mut output);
-                let qty = self.get_variable_commitment(v.qty);
-                let flv = self.get_variable_commitment(v.flv);
-                encoding::write_point(&qty, &mut output);
-                encoding::write_point(&flv, &mut output);
-            }
-        }
-    }
-
-    output
-}
-
-fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
-    spacesuit::range_proof(
-        &mut self.cs,
-        r1cs::LinearCombination::from_iter(expr.terms),
-        // TBD: maintain the assignment for the expression and provide it here
-        None,
-        bitrange,
-    )
-    .map_err(|_| VMError::R1CSInconsistency)
 }
 
 */

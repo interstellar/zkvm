@@ -8,6 +8,7 @@ use crate::encoding::*;
 use crate::errors::VMError;
 use crate::ops::Instruction;
 use crate::point_ops::PointOp;
+use crate::signature::*;
 use crate::types::*;
 
 use crate::vm::{Delegate, RunTrait, Tx, VerifiedTx, VM};
@@ -40,6 +41,13 @@ impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier {
         F: FnOnce() -> PointOp,
     {
         self.deferred_operations.push(point_op_fn());
+    }
+
+    fn sign_tx(&mut self, key: Key) -> Result<(), VMError> {
+        match key {
+            Key::Verification(k) => Ok(self.signtx_keys.push(k)),
+            Key::Signing(_) => Err(VMError::FormatError),
+        }
     }
 }
 
