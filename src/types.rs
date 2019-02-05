@@ -232,19 +232,6 @@ impl Data {
         }
     }
 
-    // Writes the type, length, and payload of the data
-    // object to the target vector.
-    pub fn write(&self, target: &mut Vec<u8>) {
-        match self {
-            Data::Opaque(data) => {
-                encoding::write_u8(vm::DATA_TYPE, target);
-                encoding::write_u32(data.len() as u32, target);
-                encoding::write_bytes(&data, target)
-            }
-            Data::Witness(_) => unimplemented!(),
-        }
-    }
-
     /// Downcast to a Predicate type.
     pub fn to_predicate(self) -> Result<Predicate, VMError> {
         match self {

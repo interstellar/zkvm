@@ -12,9 +12,10 @@ use crate::types::*;
 
 use crate::vm::{Delegate, RunTrait, Tx, VerifiedTx, VM};
 
-pub struct Verifier {
+pub struct Verifier<'a, 'b> {
     signtx_keys: Vec<VerificationKey>,
     deferred_operations: Vec<PointOp>,
+    cs: r1cs::Verifier<'a, 'b>,
 }
 
 pub struct RunVerifier {
@@ -22,16 +23,12 @@ pub struct RunVerifier {
     offset: usize,
 }
 
-impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier {
+impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier<'a, 'b> {
     type RunType = RunVerifier;
 
-    fn commit_variable(
-        &mut self,
-        cs: &mut r1cs::Verifier,
-        com: &Commitment,
-    ) -> (CompressedRistretto, r1cs::Variable) {
+    fn commit_variable(&mut self, com: &Commitment) -> (CompressedRistretto, r1cs::Variable) {
         let point = com.to_point();
-        let var = cs.commit(point);
+        let var = self.cs.commit(point);
         (point, var)
     }
 
@@ -48,17 +45,22 @@ impl<'a, 'b> Delegate<r1cs::Verifier<'a, 'b>> for Verifier {
             Predicate::Witness(_) => Err(VMError::PredicateNotOpaque),
         }
     }
+
+    fn cs(&mut self) -> &mut r1cs::Verifier<'a, 'b> {
+        &mut self.cs
+    }
 }
 
-impl Verifier {
+impl<'a, 'b> Verifier<'a, 'b> {
     pub fn verify_tx<'g>(tx: Tx, bp_gens: &'g BulletproofGens) -> Result<VerifiedTx, VMError> {
         let mut r1cs_transcript = Transcript::new(b"ZkVM.r1cs");
         let pc_gens = PedersenGens::default();
         let cs = r1cs::Verifier::new(bp_gens, &pc_gens, &mut r1cs_transcript);
 
-        let verifier = Verifier {
+        let mut verifier = Verifier {
             signtx_keys: Vec::new(),
             deferred_operations: Vec::new(),
+            cs: cs,
         };
 
         let vm = VM::new(
@@ -66,11 +68,10 @@ impl Verifier {
             tx.mintime,
             tx.maxtime,
             RunVerifier::new(tx.program),
-            verifier,
-            cs,
+            &mut verifier,
         );
 
-        let (txid, mut verifier, txlog, cs) = vm.run()?;
+        let (txid, txlog) = vm.run()?;
 
         // Verify the signatures over txid
         let mut signtx_transcript = Transcript::new(b"ZkVM.signtx");
@@ -84,7 +85,9 @@ impl Verifier {
         PointOp::verify_batch(&verifier.deferred_operations[..])?;
 
         // Verify the R1CS proof
-        cs.verify(&tx.proof)
+        verifier
+            .cs
+            .verify(&tx.proof)
             .map_err(|_| VMError::InvalidR1CSProof)?;
 
         Ok(VerifiedTx {

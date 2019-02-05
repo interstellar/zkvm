@@ -59,6 +59,10 @@ pub enum VMError {
     #[fail(display = "Item is not a constraint.")]
     TypeNotConstraint,
 
+    /// This error occurs when an instruction expects a key type.
+    #[fail(display = "Item is not a key.")]
+    TypeNotKey,
+
     /// This error occurs when an instruction requires a value type.
     #[fail(display = "Item is not a value.")]
     TypeNotValue,
@@ -66,10 +70,6 @@ pub enum VMError {
     /// This error occurs when an instruction requires a value or a wide value.
     #[fail(display = "Item is not a wide value.")]
     TypeNotWideValue,
-
-    /// This error occurs when an instruction expects a key type.
-    #[fail(display = "Item is not a key value.")]
-    TypeNotKeyValue,
 
     /// This error occurs when VM does not have enough items on the stack
     #[fail(display = "Stack does not have enough items")]

@@ -62,7 +62,7 @@ pub struct VerifiedTx {
     pub log: Vec<Entry>,
 }
 
-pub struct VM<CS, D>
+pub struct VM<'d, CS, D>
 where
     CS: r1cs::ConstraintSystem,
     D: Delegate<CS>,
@@ -81,29 +81,26 @@ where
     // stack of all items in the VM
     stack: Vec<Item>,
 
-    delegate: D,
+    delegate: &'d mut D,
 
     pub current_run: D::RunType,
     run_stack: Vec<D::RunType>,
     pub txlog: Vec<Entry>,
     pub variable_commitments: Vec<VariableCommitment>,
-    pub cs: CS,
 }
 
 pub trait Delegate<CS: r1cs::ConstraintSystem> {
     type RunType: RunTrait;
 
-    fn commit_variable(
-        &mut self,
-        cs: &mut CS,
-        com: &Commitment,
-    ) -> (CompressedRistretto, r1cs::Variable);
+    fn commit_variable(&mut self, com: &Commitment) -> (CompressedRistretto, r1cs::Variable);
 
     fn verify_point_op<F>(&mut self, point_op_fn: F)
     where
         F: FnOnce() -> PointOp;
 
     fn process_tx_signature(&mut self, pred: Predicate) -> Result<(), VMError>;
+
+    fn cs(&mut self) -> &mut CS;
 }
 
 /// A trait for an instance of a "run": a currently executed program.
@@ -129,7 +126,7 @@ pub struct VariableCommitment {
     pub variable: Option<r1cs::Variable>,
 }
 
-impl<CS, D> VM<CS, D>
+impl<'d, CS, D> VM<'d, CS, D>
 where
     CS: r1cs::ConstraintSystem,
     D: Delegate<CS>,
@@ -140,8 +137,7 @@ where
         mintime: u64,
         maxtime: u64,
         run: D::RunType,
-        delegate: D,
-        cs: CS,
+        delegate: &'d mut D,
     ) -> Self {
         VM {
             mintime,
@@ -154,12 +150,11 @@ where
             run_stack: Vec::new(),
             txlog: vec![Entry::Header(version, mintime, maxtime)],
             variable_commitments: Vec::new(),
-            cs,
         }
     }
 
     /// Runs through the entire program and nested programs until completion.
-    pub fn run(mut self) -> Result<(TxID, D, Vec<Entry>, CS), VMError> {
+    pub fn run(mut self) -> Result<(TxID, Vec<Entry>), VMError> {
         loop {
             if !self.step()? {
                 break;
@@ -176,7 +171,7 @@ where
 
         let txid = TxID::from_log(&self.txlog[..]);
 
-        Ok((txid, self.delegate, self.txlog, self.cs))
+        Ok((txid, self.txlog))
     }
 
     fn finish_run(&mut self) -> bool {
@@ -411,7 +406,8 @@ where
             cloak_ins.insert(0, cloak_value);
         }
 
-        spacesuit::cloak(&mut self.cs, cloak_ins, cloak_outs).map_err(|_| VMError::FormatError)?;
+        spacesuit::cloak(self.delegate.cs(), cloak_ins, cloak_outs)
+            .map_err(|_| VMError::FormatError)?;
 
         // Push in the same order.
         for v in output_values.into_iter() {
@@ -462,9 +458,7 @@ where
         match v_com.variable {
             Some(v) => (v_com.commitment.to_point(), v),
             None => {
-                let (point, r1cs_var) = self
-                    .delegate
-                    .commit_variable(&mut self.cs, &v_com.commitment);
+                let (point, r1cs_var) = self.delegate.commit_variable(&v_com.commitment);
                 self.variable_commitments[var.index].variable = Some(r1cs_var);
                 (point, r1cs_var)
             }
@@ -486,7 +480,7 @@ where
 
     fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
         spacesuit::range_proof(
-            &mut self.cs,
+            self.delegate.cs(),
             r1cs::LinearCombination::from_iter(expr.terms),
             // TBD: maintain the assignment for the expression and provide it here
             None,
@@ -574,9 +568,14 @@ where
         // can move all the write functions into type impl
         for item in contract.payload.iter() {
             match item {
-                PortableItem::Data(d) => {
-                    d.write(&mut output);
-                }
+                PortableItem::Data(d) => match d {
+                    Data::Opaque(data) => {
+                        encoding::write_u8(DATA_TYPE, &mut output);
+                        encoding::write_u32(data.len() as u32, &mut output);
+                        encoding::write_bytes(&data, &mut output);
+                    }
+                    Data::Witness(_) => unimplemented!(),
+                },
                 PortableItem::Value(v) => {
                     encoding::write_u8(VALUE_TYPE, &mut output);
                     let qty = self.get_variable_commitment(v.qty);
