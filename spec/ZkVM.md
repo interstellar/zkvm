@@ -1676,7 +1676,7 @@ _contract(P) L R_ **left** → _contract(L)_
     0 == -P + L + f(L, R)·B
     ```
 4. Adds the statement to the [deferred point operations](#deferred-point-operations).
-5. Replaces the contract’s predicate with `L` and leaves the contract on stack.
+5. Replaces the contract’s predicate with `L` and pushes the contract back onto the stack.
 
 Fails if the top two items are not valid [points](#point),
 or if the third from the top item is not a [contract](#contract-type).
@@ -1693,7 +1693,7 @@ _contract(P) L R_ **right** → _contract(R)_
     0 == -P + L + f(L, R)·B
     ```
 4. Adds the statement to the deferred point operations.
-5. Replaces the contract’s predicate with `R` and leaves the contract on stack.
+5. Replaces the contract’s predicate with `R` and pushes the contract back onto the stack.
 
 Fails if the top two items are not valid [points](#point),
 or if the third from the top item is not a [contract](#contract-type).
