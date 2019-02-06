@@ -201,8 +201,8 @@ where
                 Instruction::Drop => self.drop()?,
                 Instruction::Dup(i) => self.dup(i)?,
                 Instruction::Roll(i) => self.roll(i)?,
-                Instruction::Const => unimplemented!(),
-                Instruction::Var => unimplemented!(),
+                Instruction::Const => self.const_instr()?,
+                Instruction::Var => self.var()?,
                 Instruction::Alloc => unimplemented!(),
                 Instruction::Mintime => unimplemented!(),
                 Instruction::Maxtime => unimplemented!(),
@@ -281,6 +281,19 @@ where
         }
         let item = self.stack.remove(self.stack.len() - i - 1);
         self.push_item(item);
+        Ok(())
+    }
+
+    fn const_instr(&mut self) -> Result<(), VMError> {
+        let a = self.pop_item()?.to_data()?.to_scalar()?;
+        self.push_scalar_expression(a);
+        Ok(())
+    }
+
+    fn var(&mut self) -> Result<(), VMError> {
+        let point = self.pop_item()?.to_data()?.to_point()?;
+        let v = self.make_variable(Commitment::Closed(point));
+        self.push_item(v);
         Ok(())
     }
 
@@ -512,6 +525,13 @@ where
                 (point, r1cs_var)
             }
         }
+    }
+
+    fn push_scalar_expression(&mut self, a: Scalar) {
+        let expr = Expression {
+            terms: vec![(r1cs::Variable::One(), a)],
+        };
+        self.push_item(expr);
     }
 
     fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
