@@ -38,7 +38,7 @@ pub enum Data {
 }
 
 impl Data {
-      pub fn to_bytes(self) -> Vec<u8> {
+    pub fn to_bytes(self) -> Vec<u8> {
         match self {
             Data::Opaque(data) => data,
             Data::Witness(_) => unimplemented!(),
