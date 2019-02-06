@@ -76,30 +76,35 @@ where
 
     // set to true by `input` and `nonce` instructions
     // when the txid is guaranteed to be unique.
-    pub unique: bool,
+    unique: bool,
 
     // stack of all items in the VM
     stack: Vec<Item>,
 
     delegate: &'d mut D,
 
-    pub current_run: D::RunType,
+    current_run: D::RunType,
     run_stack: Vec<D::RunType>,
-    pub txlog: Vec<Entry>,
-    pub variable_commitments: Vec<VariableCommitment>,
+    txlog: Vec<Entry>,
+    variable_commitments: Vec<VariableCommitment>,
 }
 
 pub trait Delegate<CS: r1cs::ConstraintSystem> {
     type RunType: RunTrait;
 
+    /// Adds a Commitment to the underlying constraint system, producing a high-level variable
     fn commit_variable(&mut self, com: &Commitment) -> (CompressedRistretto, r1cs::Variable);
 
+    /// Adds a point operation to the list of deferred operation for later batch verification
     fn verify_point_op<F>(&mut self, point_op_fn: F)
     where
         F: FnOnce() -> PointOp;
 
+    /// Adds a key represented by Predicate to either verify or
+    /// sign a transaction
     fn process_tx_signature(&mut self, pred: Predicate) -> Result<(), VMError>;
 
+    /// Returns the delegate's underlying constraint system
     fn cs(&mut self) -> &mut CS;
 }
 
@@ -108,22 +113,22 @@ pub trait RunTrait {
     /// Returns the next instruction.
     /// Returns Err() upon decoding/format error.
     /// Returns Ok(Some()) if there is another instruction available.
-    /// Returns Ok(None if there is no more instructions to execute.
+    /// Returns Ok(None) if there is no more instructions to execute.
     fn next_instruction(&mut self) -> Result<Option<Instruction>, VMError>;
 }
 
 /// And indirect reference to a high-level variable within a constraint system.
 /// Variable types store index of such commitments that allows replacing them.
-pub struct VariableCommitment {
+struct VariableCommitment {
     /// Pedersen commitment to a variable
-    pub commitment: Commitment,
+    commitment: Commitment,
 
     /// Attached/detached state
     /// None if the variable is not attached to the CS yet,
     /// so its commitment is replaceable via `reblind`.
     /// Some if variable is attached to the CS yet and has an index in CS,
     /// so its commitment is no longer replaceable via `reblind`.
-    pub variable: Option<r1cs::Variable>,
+    variable: Option<r1cs::Variable>,
 }
 
 impl<'d, CS, D> VM<'d, CS, D>
@@ -261,7 +266,7 @@ where
         }
         let item_idx = self.stack.len() - i - 1;
         let item = match &self.stack[item_idx] {
-            Item::Data(x) => Item::Data(x.dup()?),
+            Item::Data(x) => Item::Data(x.tbd_clone()?),
             Item::Variable(x) => Item::Variable(x.clone()),
             Item::Expression(x) => Item::Expression(x.clone()),
             Item::Constraint(x) => Item::Constraint(x.clone()),
@@ -327,6 +332,14 @@ where
         Ok(())
     }
 
+    fn retire(&mut self) -> Result<(), VMError> {
+        let value = self.pop_item()?.to_value()?;
+        let qty = self.get_variable_commitment(value.qty);
+        let flv = self.get_variable_commitment(value.flv);
+        self.txlog.push(Entry::Retire(qty, flv));
+        Ok(())
+    }
+
     /// _input_ **input** → _contract_
     fn input(&mut self) -> Result<(), VMError> {
         let input = self.pop_item()?.to_data()?.to_input()?;
@@ -334,14 +347,6 @@ where
         self.push_item(contract);
         self.txlog.push(Entry::Input(utxo));
         self.unique = true;
-        Ok(())
-    }
-
-    fn retire(&mut self) -> Result<(), VMError> {
-        let value = self.pop_item()?.to_value()?;
-        let qty = self.get_variable_commitment(value.qty);
-        let flv = self.get_variable_commitment(value.flv);
-        self.txlog.push(Entry::Retire(qty, flv));
         Ok(())
     }
 
@@ -357,6 +362,22 @@ where
         let contract = self.pop_contract(k)?;
         self.push_item(contract);
         Ok(())
+    }
+
+    fn pop_contract(&mut self, k: usize) -> Result<Contract, VMError> {
+        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
+
+        if k > self.stack.len() {
+            return Err(VMError::StackUnderflow);
+        }
+
+        let payload = self
+            .stack
+            .drain(self.stack.len() - k..)
+            .map(|item| item.to_portable())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Contract { predicate, payload })
     }
 
     fn cloak(&mut self, m: usize, n: usize) -> Result<(), VMError> {
@@ -418,9 +439,9 @@ where
     }
 
     // Prover:
-    // - remember the KeyType (Scalar) in a list and make a sig later.
+    // - remember the signing key (Scalar) in a list and make a sig later.
     // Verifier:
-    // - remember the KeyType (Point) in a list and check a sig later.
+    // - remember the verificaton key (Point) in a list and check a sig later.
     // Both: put the payload onto the stack.
     // _contract_ **signtx** → _results..._
     fn signtx(&mut self) -> Result<(), VMError> {
@@ -441,6 +462,24 @@ where
             Err(VMError::ExtensionsNotAllowed)
         }
     }
+}
+
+// Utility methods
+impl<'d, CS, D> VM<'d, CS, D>
+where
+    CS: r1cs::ConstraintSystem,
+    D: Delegate<CS>,
+{
+    fn pop_item(&mut self) -> Result<Item, VMError> {
+        self.stack.pop().ok_or(VMError::StackUnderflow)
+    }
+
+    fn push_item<T>(&mut self, item: T)
+    where
+        T: Into<Item>,
+    {
+        self.stack.push(item.into())
+    }
 
     fn make_variable(&mut self, commitment: Commitment) -> Variable {
         let index = self.variable_commitments.len();
@@ -450,6 +489,11 @@ where
             variable: None,
         });
         Variable { index }
+    }
+
+    fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
+        let var_com = &self.variable_commitments[var.index].commitment;
+        var_com.to_point()
     }
 
     fn attach_variable(&mut self, var: Variable) -> (CompressedRistretto, r1cs::Variable) {
@@ -465,12 +509,37 @@ where
         }
     }
 
-    fn get_variable_commitment(&self, var: Variable) -> CompressedRistretto {
-        let var_com = &self.variable_commitments[var.index].commitment;
-        var_com.to_point()
+    fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
+        spacesuit::AllocatedValue {
+            q: self.attach_variable(value.qty).1,
+            f: self.attach_variable(value.flv).1,
+            // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
+            assignment: None,
+        }
     }
 
-    // Utility functions
+    fn wide_value_to_cloak_value(&mut self, walue: &WideValue) -> spacesuit::AllocatedValue {
+        spacesuit::AllocatedValue {
+            q: walue.r1cs_qty,
+            f: walue.r1cs_flv,
+            // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
+            assignment: None,
+        }
+    }
+
+    fn item_to_wide_value(&mut self, item: Item) -> Result<WideValue, VMError> {
+        match item {
+            Item::Value(value) => Ok(WideValue {
+                r1cs_qty: self.attach_variable(value.qty).1,
+                r1cs_flv: self.attach_variable(value.flv).1,
+                // TBD: add witness for Value types where it exists.
+                witness: None,
+            }),
+            Item::WideValue(w) => Ok(w),
+            _ => Err(VMError::TypeNotWideValue),
+        }
+    }
+
     fn variable_to_expression(&mut self, var: Variable) -> Expression {
         let (_, r1cs_var) = self.attach_variable(var);
         Expression {
@@ -487,24 +556,6 @@ where
             bitrange,
         )
         .map_err(|_| VMError::R1CSInconsistency)
-    }
-
-    fn push_item<T>(&mut self, item: T)
-    where
-        T: Into<Item>,
-    {
-        self.stack.push(item.into())
-    }
-
-    pub fn pop_item(&mut self) -> Result<Item, VMError> {
-        self.stack.pop().ok_or(VMError::StackUnderflow)
-    }
-
-    fn spend_input(&mut self, input: Input) -> Result<(Contract, UTXO), VMError> {
-        match input {
-            Input::Opaque(data) => self.decode_input(data),
-            Input::Witness(w) => unimplemented!(),
-        }
     }
 
     fn decode_input(&mut self, data: Vec<u8>) -> Result<(Contract, UTXO), VMError> {
@@ -588,49 +639,10 @@ where
         output
     }
 
-    fn pop_contract(&mut self, k: usize) -> Result<Contract, VMError> {
-        let predicate = self.pop_item()?.to_data()?.to_predicate()?;
-
-        if k > self.stack.len() {
-            return Err(VMError::StackUnderflow);
-        }
-
-        let payload = self
-            .stack
-            .drain(self.stack.len() - k..)
-            .map(|item| item.to_portable())
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(Contract { predicate, payload })
-    }
-
-    fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
-        spacesuit::AllocatedValue {
-            q: self.attach_variable(value.qty).1,
-            f: self.attach_variable(value.flv).1,
-            // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
-            assignment: None,
-        }
-    }
-
-    fn item_to_wide_value(&mut self, item: Item) -> Result<WideValue, VMError> {
-        match item {
-            Item::Value(value) => Ok(WideValue {
-                r1cs_qty: self.attach_variable(value.qty).1,
-                r1cs_flv: self.attach_variable(value.flv).1,
-                witness: None,
-            }),
-            Item::WideValue(w) => Ok(w),
-            _ => Err(VMError::TypeNotWideValue),
-        }
-    }
-
-    fn wide_value_to_cloak_value(&mut self, walue: &WideValue) -> spacesuit::AllocatedValue {
-        spacesuit::AllocatedValue {
-            q: walue.r1cs_qty,
-            f: walue.r1cs_flv,
-            // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
-            assignment: None,
+    fn spend_input(&mut self, input: Input) -> Result<(Contract, UTXO), VMError> {
+        match input {
+            Input::Opaque(data) => self.decode_input(data),
+            Input::Witness(w) => unimplemented!(),
         }
     }
 }

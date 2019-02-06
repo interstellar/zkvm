@@ -37,11 +37,6 @@ pub enum Data {
     Witness(DataWitness),
 }
 
-pub enum Program {
-    Opaque(Range<usize>),
-    Witness(Vec<Instruction>),
-}
-
 #[derive(Debug)]
 pub struct Contract {
     pub(crate) payload: Vec<PortableItem>,
@@ -118,12 +113,6 @@ pub enum PredicateWitness {
     Or(Box<(PredicateWitness, PredicateWitness)>),
 }
 
-impl PredicateWitness {
-    pub fn to_point(&self) -> CompressedRistretto {
-        unimplemented!()
-    }
-}
-
 /// Prover's representation of the commitment secret: witness and blinding factor
 #[derive(Clone, Debug)]
 pub struct CommitmentWitness {
@@ -140,6 +129,13 @@ impl Commitment {
     }
 }
 
+impl CommitmentWitness {
+    pub fn to_point(&self) -> CompressedRistretto {
+        let gens = PedersenGens::default();
+        gens.commit(self.value, self.blinding).compress()
+    }
+}
+
 impl Predicate {
     pub fn to_point(&self) -> CompressedRistretto {
         match self {
@@ -149,10 +145,9 @@ impl Predicate {
     }
 }
 
-impl CommitmentWitness {
+impl PredicateWitness {
     pub fn to_point(&self) -> CompressedRistretto {
-        let gens = PedersenGens::default();
-        gens.commit(self.value, self.blinding).compress()
+        unimplemented!()
     }
 }
 
@@ -225,7 +220,8 @@ impl Data {
         }
     }
 
-    pub fn dup(&self) -> Result<Data, VMError> {
+    // TBD: make frozen types that are clonable
+    pub fn tbd_clone(&self) -> Result<Data, VMError> {
         match self {
             Data::Opaque(data) => Ok(Data::Opaque(data.to_vec())),
             Data::Witness(_) => unimplemented!(),
