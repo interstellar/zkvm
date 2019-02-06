@@ -297,6 +297,18 @@ where
         Ok(())
     }
 
+    fn mintime(&mut self) -> Result<(), VMError> {
+        let a = Scalar::from(self.mintime);
+        self.push_scalar_expression(a);
+        Ok(())
+    }
+
+    fn maxtime(&mut self) -> Result<(), VMError> {
+        let a = Scalar::from(self.maxtime);
+        self.push_scalar_expression(a);
+        Ok(())
+    }
+
     fn nonce(&mut self) -> Result<(), VMError> {
         let predicate = self.pop_item()?.to_data()?.to_predicate()?;
         let point = predicate.to_point();
