@@ -520,7 +520,7 @@ where
             None => None,
             Some(q) => match self.variable_assignment(value.flv) {
                 None => None,
-                Some(f) => Some(spacesuit::Value { q: q, f: f.into() }),
+                Some(f) => Some(spacesuit::Value { q: scalar_to_u64(q), f: f }),
             },
         };
         spacesuit::AllocatedValue {
@@ -566,15 +566,18 @@ where
         let (_, r1cs_var) = self.attach_variable(var);
         Expression {
             terms: vec![(r1cs_var, Scalar::one())],
-            assignment: self.variable_assignment(var),
+            assignment: match self.variable_assignment(var) {
+                None => None,
+                Some(v) => Some(scalar_to_u64(v)),
+            }
         }
     }
 
-    fn variable_assignment(&mut self, var: Variable) -> Option<u64> {
+    fn variable_assignment(&mut self, var: Variable) -> Option<Scalar> {
         let v_com = &self.variable_commitments[var.index];
         match &v_com.commitment {
             Commitment::Closed(_) => None,
-            Commitment::Open(w) => Some(scalar_to_u64(w.value)),
+            Commitment::Open(w) => Some(w.value),
         }
     }
 

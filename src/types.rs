@@ -125,7 +125,7 @@ pub enum PredicateWitness {
 #[derive(Clone, Debug)]
 pub struct CommitmentWitness {
     pub value: Scalar,
-    blinding: Scalar,
+    pub blinding: Scalar,
 }
 
 impl Commitment {
