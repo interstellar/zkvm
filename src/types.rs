@@ -34,15 +34,6 @@ pub enum Data {
     Witness(DataWitness),
 }
 
-impl Data {
-    pub fn to_bytes(self) -> Vec<u8> {
-        match self {
-            Data::Opaque(data) => data,
-            Data::Witness(_) => unimplemented!(),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Contract {
     pub(crate) payload: Vec<PortableItem>,
@@ -217,6 +208,14 @@ impl Item {
 }
 
 impl Data {
+    
+    pub fn to_bytes(self) -> Vec<u8> {
+        match self {
+            Data::Opaque(data) => data,
+            Data::Witness(_) => unimplemented!(),
+        }
+    }
+
     // len returns the length of the data for purposes of
     // allocating output.
     pub fn exact_output_size(&self) -> usize {
