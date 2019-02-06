@@ -547,15 +547,11 @@ where
         }
     }
 
-    fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
-        spacesuit::range_proof(
-            self.delegate.cs(),
-            r1cs::LinearCombination::from_iter(expr.terms),
-            // TBD: maintain the assignment for the expression and provide it here
-            None,
-            bitrange,
-        )
-        .map_err(|_| VMError::R1CSInconsistency)
+    fn spend_input(&mut self, input: Input) -> Result<(Contract, UTXO), VMError> {
+        match input {
+            Input::Opaque(data) => self.decode_input(data),
+            Input::Witness(w) => unimplemented!(),
+        }
     }
 
     fn decode_input(&mut self, data: Vec<u8>) -> Result<(Contract, UTXO), VMError> {
@@ -639,10 +635,14 @@ where
         output
     }
 
-    fn spend_input(&mut self, input: Input) -> Result<(Contract, UTXO), VMError> {
-        match input {
-            Input::Opaque(data) => self.decode_input(data),
-            Input::Witness(w) => unimplemented!(),
-        }
+    fn add_range_proof(&mut self, bitrange: usize, expr: Expression) -> Result<(), VMError> {
+        spacesuit::range_proof(
+            self.delegate.cs(),
+            r1cs::LinearCombination::from_iter(expr.terms),
+            // TBD: maintain the assignment for the expression and provide it here
+            None,
+            bitrange,
+        )
+        .map_err(|_| VMError::R1CSInconsistency)
     }
 }
