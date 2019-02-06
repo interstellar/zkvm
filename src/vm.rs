@@ -1,5 +1,6 @@
 use bulletproofs::r1cs;
 use bulletproofs::r1cs::R1CSProof;
+use byteorder::{ByteOrder, LittleEndian};
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use spacesuit;
@@ -515,11 +516,17 @@ where
     }
 
     fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
+        let assignment = match self.variable_assignment(value.qty) {
+            None => None,
+            Some(q) => match self.variable_assignment(value.flv) {
+                None => None,
+                Some(f) => Some(spacesuit::Value { q: q, f: f.into() }),
+            },
+        };
         spacesuit::AllocatedValue {
             q: self.attach_variable(value.qty).1,
             f: self.attach_variable(value.flv).1,
-            // TBD: maintain assignments inside Value types in order to use ZkVM to compute the R1CS proof
-            assignment: None,
+            assignment,
         }
     }
 
@@ -527,8 +534,13 @@ where
         spacesuit::AllocatedValue {
             q: walue.r1cs_qty,
             f: walue.r1cs_flv,
-            // TBD: maintain assignments inside WideValue types in order to use ZkVM to compute the R1CS proof
-            assignment: None,
+            assignment: match walue.witness {
+                None => None,
+                Some(w) => Some(spacesuit::Value {
+                    q: scalar_to_u64(w.0),
+                    f: w.1,
+                }),
+            },
         }
     }
 
@@ -537,8 +549,13 @@ where
             Item::Value(value) => Ok(WideValue {
                 r1cs_qty: self.attach_variable(value.qty).1,
                 r1cs_flv: self.attach_variable(value.flv).1,
-                // TBD: add witness for Value types where it exists.
-                witness: None,
+                witness: match self.variable_assignment(value.qty) {
+                    None => None,
+                    Some(q) => match self.variable_assignment(value.flv) {
+                        None => None,
+                        Some(f) => Some((q.into(), f.into())),
+                    },
+                },
             }),
             Item::WideValue(w) => Ok(w),
             _ => Err(VMError::TypeNotWideValue),
@@ -549,6 +566,15 @@ where
         let (_, r1cs_var) = self.attach_variable(var);
         Expression {
             terms: vec![(r1cs_var, Scalar::one())],
+            assignment: self.variable_assignment(var),
+        }
+    }
+
+    fn variable_assignment(&mut self, var: Variable) -> Option<u64> {
+        let v_com = &self.variable_commitments[var.index];
+        match &v_com.commitment {
+            Commitment::Closed(_) => None,
+            Commitment::Open(w) => Some(scalar_to_u64(w.value)),
         }
     }
 
@@ -644,10 +670,14 @@ where
         spacesuit::range_proof(
             self.delegate.cs(),
             r1cs::LinearCombination::from_iter(expr.terms),
-            // TBD: maintain the assignment for the expression and provide it here
-            None,
+            expr.assignment,
             bitrange,
         )
         .map_err(|_| VMError::R1CSInconsistency)
     }
+}
+
+// Helper methods
+fn scalar_to_u64(scalar: Scalar) -> u64 {
+    LittleEndian::read_u64(&scalar.to_bytes())
 }

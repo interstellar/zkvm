@@ -1,7 +1,7 @@
 //! Core ZkVM stack types: data, variables, values, contracts etc.
 
-use crate::transcript::TranscriptProtocol;
 use bulletproofs::{r1cs, PedersenGens};
+use byteorder::{ByteOrder, LittleEndian};
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::scalar::Scalar;
 use merlin::Transcript;
@@ -9,6 +9,7 @@ use merlin::Transcript;
 use crate::encoding::Subslice;
 use crate::errors::VMError;
 use crate::ops::Instruction;
+use crate::transcript::TranscriptProtocol;
 use crate::txlog::UTXO;
 
 #[derive(Debug)]
@@ -72,6 +73,7 @@ pub struct Variable {
 pub struct Expression {
     /// Terms of the expression
     pub(crate) terms: Vec<(r1cs::Variable, Scalar)>,
+    pub(crate) assignment: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -122,7 +124,7 @@ pub enum PredicateWitness {
 /// Prover's representation of the commitment secret: witness and blinding factor
 #[derive(Clone, Debug)]
 pub struct CommitmentWitness {
-    value: Scalar,
+    pub value: Scalar,
     blinding: Scalar,
 }
 
