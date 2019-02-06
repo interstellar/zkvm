@@ -124,8 +124,14 @@ pub enum PredicateWitness {
 /// Prover's representation of the commitment secret: witness and blinding factor
 #[derive(Clone, Debug)]
 pub struct CommitmentWitness {
-    pub value: Scalar,
+    pub value: ScalarKind,
     pub blinding: Scalar,
+}
+
+#[derive(Copy,Clone,Debug)]
+pub enum ScalarKind {
+    Integer(u64),
+    Scalar(Scalar),
 }
 
 impl Commitment {
@@ -140,7 +146,16 @@ impl Commitment {
 impl CommitmentWitness {
     pub fn to_point(&self) -> CompressedRistretto {
         let gens = PedersenGens::default();
-        gens.commit(self.value, self.blinding).compress()
+        gens.commit(self.value.into(), self.blinding).compress()
+    }
+}
+
+impl Into<Scalar> for ScalarKind {
+    fn into(self) -> Scalar {
+        match self {
+            ScalarKind::Integer(i) => i.into(),
+            ScalarKind::Scalar(s) => s
+        }
     }
 }
 
