@@ -279,17 +279,6 @@ impl Data {
             Data::Witness(_) => unimplemented!(),
         }
     }
-
-    /// Converts a bytestring to a compressed point
-    pub fn to_point(self) -> Result<CompressedRistretto, VMError> {
-        match self {
-            Data::Opaque(data) => {
-                let point = Subslice::new(&data).read_point()?;
-                Ok(point)
-            }
-            Data::Witness(_) => unimplemented!(),
-        }
-    }
 }
 
 impl Contract {
