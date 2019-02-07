@@ -286,26 +286,26 @@ where
 
     fn const_instr(&mut self) -> Result<(), VMError> {
         let a = self.pop_item()?.to_data()?.to_scalar()?;
-        self.push_scalar_expression(a);
+        self.push_item(Expression::from(a));
         Ok(())
     }
 
     fn var(&mut self) -> Result<(), VMError> {
-        let point = self.pop_item()?.to_data()?.to_point()?;
-        let v = self.make_variable(Commitment::Closed(point));
+        let comm = self.pop_item()?.to_data()?.to_commitment()?;
+        let v = self.make_variable(comm);
         self.push_item(v);
         Ok(())
     }
 
     fn mintime(&mut self) -> Result<(), VMError> {
-        let a = Scalar::from(self.mintime);
-        self.push_scalar_expression(a);
+        let a: Scalar = self.mintime.into();
+        self.push_item(Expression::from(a));
         Ok(())
     }
 
     fn maxtime(&mut self) -> Result<(), VMError> {
-        let a = Scalar::from(self.maxtime);
-        self.push_scalar_expression(a);
+        let a: Scalar = self.maxtime.into();
+        self.push_item(Expression::from(a));
         Ok(())
     }
 
@@ -567,13 +567,6 @@ where
                 (point, r1cs_var)
             }
         }
-    }
-
-    fn push_scalar_expression(&mut self, a: Scalar) {
-        let expr = Expression {
-            terms: vec![(r1cs::Variable::One(), a)],
-        };
-        self.push_item(expr);
     }
 
     fn value_to_cloak_value(&mut self, value: &Value) -> spacesuit::AllocatedValue {
