@@ -289,7 +289,7 @@ impl Data {
     pub fn to_scalar(self) -> Result<Scalar, VMError> {
         match self {
             Data::Opaque(data) => {
-                let scalar = Subslice::new(&data).read_scalar()?;
+                Subslice::new(&data).read_scalar()
                 Ok(scalar)
             }
             Data::Witness(_) => unimplemented!(),
