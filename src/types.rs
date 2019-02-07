@@ -208,7 +208,6 @@ impl Item {
 }
 
 impl Data {
-    
     pub fn to_bytes(self) -> Vec<u8> {
         match self {
             Data::Opaque(data) => data,
@@ -312,6 +311,14 @@ impl Value {
         let mut t = Transcript::new(b"ZkVM.issue");
         t.commit_bytes(b"predicate", predicate.to_point().as_bytes());
         t.challenge_scalar(b"flavor")
+    }
+}
+
+impl From<Scalar> for Expression {
+    fn from(a: Scalar) -> Self {
+        Expression {
+            terms: vec![(r1cs::Variable::One(), a)],
+        }
     }
 }
 
