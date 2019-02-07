@@ -231,7 +231,6 @@ impl Item {
 }
 
 impl Data {
-
     // Returns the length of the underlying vector of bytes.
     pub fn len(&self) -> usize {
         match self {
@@ -288,9 +287,7 @@ impl Data {
     /// Converts a bytestring to a canonical scalar
     pub fn to_scalar(self) -> Result<Scalar, VMError> {
         match self {
-            Data::Opaque(data) => {
-                Subslice::new(&data).read_scalar()
-            }
+            Data::Opaque(data) => Subslice::new(&data).read_scalar(),
             Data::Witness(_) => unimplemented!(),
         }
     }
