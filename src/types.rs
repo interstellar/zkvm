@@ -290,7 +290,6 @@ impl Data {
         match self {
             Data::Opaque(data) => {
                 Subslice::new(&data).read_scalar()
-                Ok(scalar)
             }
             Data::Witness(_) => unimplemented!(),
         }
